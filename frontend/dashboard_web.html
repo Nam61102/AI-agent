@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NRYN - WhatsApp Relationship & Context Agent</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Socket.IO Client -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- QRCode.js Library for client-side QR rendering -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="navbar">
+      <div class="brand">
+        <div class="brand-logo">N</div>
+        <div class="brand-info">
+          <h1>NRYN</h1>
+          <span class="tagline">Relationship & Context Agent</span>
+        </div>
+      </div>
+      <div class="nav-actions">
+        <div id="wa-status-badge" class="status-badge not-connected">
+          <span class="status-dot"></span>
+          <span id="wa-status-text">WhatsApp: Not Connected</span>
+        </div>
+        <button id="btn-connect-wa" class="btn btn-primary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+          </svg>
+          <span id="btn-connect-text">Connect WhatsApp</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <div class="dashboard-grid">
+        <!-- Overview Card -->
+        <div class="card overview-card">
+          <div class="card-header">
+            <h2>Integration Status</h2>
+            <span class="badge">Read-Only Mode</span>
+          </div>
+          <div class="card-body">
+            <p class="description">
+              NRYN is configured to ingest incoming WhatsApp messages and automatically sync contacts to your Supabase database.
+            </p>
+            <div class="metrics-grid">
+              <div class="metric-box">
+                <span class="metric-label">Connection</span>
+                <span id="metric-conn-status" class="metric-value">Disconnected</span>
+              </div>
+              <div class="metric-box">
+                <span class="metric-label">Data Storage</span>
+                <span class="metric-value green">Supabase Connected</span>
+              </div>
+              <div class="metric-box">
+                <span class="metric-label">Mode</span>
+                <span class="metric-value blue">WhatsApp Ingestion</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Connection Management Card -->
+        <div class="card action-card">
+          <div class="card-header">
+            <h2>WhatsApp Device Link</h2>
+          </div>
+          <div class="card-body">
+            <div id="wa-card-info" class="card-info-box">
+              <p>Link your personal WhatsApp account using Baileys multi-device protocol.</p>
+              <ul class="feature-list">
+                <li>✓ Local encrypted session storage</li>
+                <li>✓ Read-only incoming message ingestion</li>
+                <li>✓ Contact auto-indexing in Supabase</li>
+                <li>✓ Zero terminal QR code exposure</li>
+              </ul>
+            </div>
+            <div class="card-actions">
+              <button id="btn-action-primary" class="btn btn-primary btn-lg">
+                Connect WhatsApp
+              </button>
+              <button id="btn-action-disconnect" class="btn btn-danger btn-lg hidden">
+                Disconnect Device
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- QR MODAL DIALOG -->
+    <div id="qr-modal-backdrop" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 id="modal-title">Connect WhatsApp</h3>
+          <button id="btn-close-modal" class="btn-icon">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <!-- STATE 1: CONNECTING -->
+          <div id="modal-state-connecting" class="modal-state">
+            <div class="spinner"></div>
+            <p class="state-message">Initializing WhatsApp Client...</p>
+            <span class="subtext">Connecting to backend service</span>
+          </div>
+
+          <!-- STATE 2: QR AVAILABLE -->
+          <div id="modal-state-qr" class="modal-state hidden">
+            <p class="instruction-heading">Scan this QR code with WhatsApp</p>
+            
+            <div class="qr-container">
+              <div id="qrcode-box"></div>
+            </div>
+
+            <div class="instructions-steps">
+              <ol>
+                <li>Open <strong>WhatsApp</strong> on your phone</li>
+                <li>Tap <strong>Menu</strong> or <strong>Settings</strong></li>
+                <li>Select <strong>Linked Devices</strong> &rarr; <strong>Link a Device</strong></li>
+                <li>Point your phone at this screen to scan the QR code</li>
+              </ol>
+            </div>
+
+            <div class="pulse-indicator">
+              <span class="dot"></span> Waiting for connection...
+            </div>
+          </div>
+
+          <!-- STATE 3: CONNECTING AFTER SCAN -->
+          <div id="modal-state-authenticating" class="modal-state hidden">
+            <div class="spinner green"></div>
+            <p class="state-message">Connecting to WhatsApp...</p>
+            <span class="subtext">Authenticating linked device session</span>
+          </div>
+
+          <!-- STATE 4: CONNECTED -->
+          <div id="modal-state-connected" class="modal-state hidden">
+            <div class="success-icon">✓</div>
+            <p class="state-message green">WhatsApp Connected Successfully!</p>
+            <span class="subtext">Device paired. Closing window...</span>
+          </div>
+
+          <!-- STATE 5: ERROR -->
+          <div id="modal-state-error" class="modal-state hidden">
+            <div class="error-icon">⚠️</div>
+            <p class="state-message red" id="error-message">Unable to connect WhatsApp</p>
+            <span class="subtext">An error occurred during authentication</span>
+            <button id="btn-retry-connect" class="btn btn-secondary mt-12">Retry Connection</button>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btn-cancel-modal" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
