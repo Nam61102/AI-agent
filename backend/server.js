@@ -45,9 +45,13 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+const aiRoutes = require('./src/routes/ai.routes');
+
 // WhatsApp API endpoints
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/extractions', extractionsRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/dashboard', aiRoutes);
 
 // Handle server errors gracefully (e.g. EADDRINUSE)
 server.on('error', (err) => {

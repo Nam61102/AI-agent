@@ -71,11 +71,13 @@ async function saveMessage(msg) {
 /**
  * Fetch all active chats ordered with Priority on Top (Filtered for last 12 hours)
  */
+const { formatPhoneNumber, getCanonicalJid } = require('../whatsapp/whatsapp.utils');
+
 async function getChats() {
   const query = `
     SELECT 
       m.chat_jid AS jid,
-      COALESCE(c.name, split_part(m.chat_jid, '@', 1)) AS name,
+      c.name AS db_name,
       (m.chat_jid LIKE '%@g.us') AS is_group,
       m.text AS last_message_text,
       m.timestamp AS last_message_timestamp,
@@ -89,19 +91,84 @@ async function getChats() {
     ) m
     LEFT JOIN contacts c ON m.chat_jid = c.jid
     ORDER BY 
-      (NOT m.from_me) DESC,
       m.timestamp DESC;
   `;
   try {
     const result = await supabase.query(query);
-    return result.rows;
+    // Format fallback names properly
+    return result.rows.map(row => {
+      let finalName = row.db_name;
+      if (!finalName) {
+         const rawId = row.jid.split('@')[0];
+         finalName = row.is_group ? 'Group' : formatPhoneNumber(rawId);
+      }
+      return { ...row, name: finalName };
+    });
   } catch (error) {
     console.error('[MessageService] Failed to fetch chats:', error.message);
     return [];
   }
 }
 
+async function getChatMessages(jid, hours = 6) {
+  const canonicalJid = getCanonicalJid(jid);
+  const query = `
+    SELECT 
+      id, chat_jid, sender_jid, from_me, text, timestamp, message_type
+    FROM messages
+    WHERE chat_jid = $1
+      AND text IS NOT NULL
+      AND TRIM(text) != ''
+      AND timestamp >= NOW() - INTERVAL '${hours} hours'
+    ORDER BY timestamp ASC;
+  `;
+  try {
+    const result = await supabase.query(query, [canonicalJid]);
+    return result.rows;
+  } catch (error) {
+    console.error('[MessageService] Failed to fetch chat messages:', error.message);
+    throw error;
+  }
+}
+
+async function getRecentThreadHistory(chatJid, limit = 8, beforeMessageId = null) {
+  const canonicalJid = getCanonicalJid(chatJid);
+  let query = `
+    SELECT 
+      m.id, m.chat_jid, m.sender_jid, m.from_me, m.text, m.timestamp,
+      c.name AS sender_name
+    FROM (
+      SELECT * FROM messages
+      WHERE chat_jid = $1
+        AND text IS NOT NULL
+        AND TRIM(text) != ''
+        ${beforeMessageId ? 'AND id < $3' : ''}
+      ORDER BY timestamp DESC
+      LIMIT $2
+    ) m
+    LEFT JOIN contacts c ON m.sender_jid = c.jid
+    ORDER BY m.timestamp ASC;
+  `;
+
+  try {
+    const params = beforeMessageId ? [canonicalJid, limit, beforeMessageId] : [canonicalJid, limit];
+    const result = await supabase.query(query, params);
+    return result.rows.map(row => ({
+      id: row.id,
+      from_me: Boolean(row.from_me),
+      sender: row.from_me ? 'You' : (row.sender_name || formatPhoneNumber(row.sender_jid.split('@')[0])),
+      text: row.text,
+      timestamp: row.timestamp
+    }));
+  } catch (error) {
+    console.error('[MessageService] Failed to fetch thread history:', error.message);
+    return [];
+  }
+}
+
 module.exports = {
   saveMessage,
-  getChats
+  getChats,
+  getChatMessages,
+  getRecentThreadHistory
 };

@@ -1,5 +1,4 @@
-const BACKEND_URL = 'http://127.0.0.1:3000';
-
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string;
 export interface ExtractionPayload {
   description?: string;
   due_date?: string;
@@ -70,10 +69,10 @@ class ExtractionService {
     }
   }
 
-  // Attempt to fetch source message (endpoint might not exist yet)
+  // Attempt to fetch source message
   async getSourceMessage(messageId: number): Promise<{ text: string } | null> {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/messages/${messageId}`);
+      const response = await fetch(`${BACKEND_URL}/api/extractions/source-message/${messageId}`);
       if (!response.ok) return null;
       const data = await response.json();
       if (data.success && data.data) {

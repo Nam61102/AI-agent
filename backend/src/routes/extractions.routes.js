@@ -1,21 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabase');
-
-function completeLegacyPayload(row) {
-  const sourceText = String(row.source_text || '').trim().toLowerCase();
-  const payload = { ...(row.payload || {}) };
-
-  if (row.type === 'meeting' && sourceText.includes('meeting chalu')) {
-    payload.title = 'The meeting is ongoing';
-  } else if (row.type === 'task' && sourceText.includes('kela order')) {
-    payload.description = 'The banana order has been completed';
-  } else if (row.type === 'task' && sourceText.includes('tiffins nahiyt')) {
-    payload.description = 'There will be no tiffins today and tomorrow';
-  }
-
-  return { ...row, payload };
-}
+const { formatPhoneNumber } = require('../whatsapp/whatsapp.utils');
 
 // GET /api/extractions
 router.get('/', async (req, res) => {
@@ -23,14 +9,16 @@ router.get('/', async (req, res) => {
     const { type, status, contact_id } = req.query;
     
     let query = `
-            SELECT e.*, m.text AS source_text, m.sender_jid, m.chat_jid,
-              COALESCE(chat.name, m.chat_jid) AS chat_name,
-              CASE WHEN m.from_me THEN 'You' ELSE COALESCE(sender.name, m.sender_jid) END AS sender_name
+      SELECT e.*, m.text AS source_text, m.sender_jid, m.chat_jid,
+        chat.name AS db_chat_name,
+        sender.name AS db_sender_name,
+        m.from_me
       FROM extractions e
       LEFT JOIN messages m ON m.id = e.source_message_id
       LEFT JOIN contacts sender ON sender.jid = m.sender_jid
       LEFT JOIN contacts chat ON chat.jid = m.chat_jid
-        WHERE 1=1`;
+      WHERE e.type != 'none'`;
+    
     const values = [];
     let paramIndex = 1;
 
@@ -51,9 +39,15 @@ router.get('/', async (req, res) => {
 
     const result = await supabase.query(query, values);
 
+    const formattedData = result.rows.map(row => {
+      row.chat_name = row.db_chat_name || (row.chat_jid && row.chat_jid.endsWith('@g.us') ? 'Group' : formatPhoneNumber(row.chat_jid ? row.chat_jid.split('@')[0] : ''));
+      row.sender_name = row.from_me ? 'You' : (row.db_sender_name || formatPhoneNumber(row.sender_jid ? row.sender_jid.split('@')[0] : ''));
+      return row;
+    });
+
     res.json({
       success: true,
-      data: result.rows.map(completeLegacyPayload)
+      data: formattedData
     });
   } catch (error) {
     console.error('[Extractions API] GET / error:', error.message);
@@ -65,33 +59,79 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    
-    if (isNaN(id)) {
-      return res.status(400).json({ success: false, error: 'Invalid ID' });
-    }
+    if (isNaN(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
 
-      const result = await supabase.query(
-        `SELECT e.*, m.text AS source_text, m.sender_jid, m.chat_jid,
-          COALESCE(chat.name, m.chat_jid) AS chat_name,
-          CASE WHEN m.from_me THEN 'You' ELSE COALESCE(sender.name, m.sender_jid) END AS sender_name
-         FROM extractions e
-         LEFT JOIN messages m ON m.id = e.source_message_id
-         LEFT JOIN contacts sender ON sender.jid = m.sender_jid
-         LEFT JOIN contacts chat ON chat.jid = m.chat_jid
-         WHERE e.id = $1`,
-        [id]
-      );
+    const result = await supabase.query(
+      `SELECT e.*, m.text AS source_text, m.sender_jid, m.chat_jid,
+        chat.name AS db_chat_name,
+        sender.name AS db_sender_name,
+        m.from_me
+       FROM extractions e
+       LEFT JOIN messages m ON m.id = e.source_message_id
+       LEFT JOIN contacts sender ON sender.jid = m.sender_jid
+       LEFT JOIN contacts chat ON chat.jid = m.chat_jid
+       WHERE e.id = $1 AND e.type != 'none'`,
+      [id]
+    );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Extraction not found' });
     }
 
+    const row = result.rows[0];
+    row.chat_name = row.db_chat_name || (row.chat_jid && row.chat_jid.endsWith('@g.us') ? 'Group' : formatPhoneNumber(row.chat_jid ? row.chat_jid.split('@')[0] : ''));
+    row.sender_name = row.from_me ? 'You' : (row.db_sender_name || formatPhoneNumber(row.sender_jid ? row.sender_jid.split('@')[0] : ''));
+
     res.json({
       success: true,
-      data: completeLegacyPayload(result.rows[0])
+      data: row
     });
   } catch (error) {
     console.error('[Extractions API] GET /:id error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/extractions/:id/confirm
+router.post('/:id/confirm', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
+    
+    await supabase.query('UPDATE extractions SET status = $1 WHERE id = $2', ['active', id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Extractions API] POST /:id/confirm error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/extractions/:id/reject
+router.post('/:id/reject', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
+    
+    await supabase.query('UPDATE extractions SET status = $1 WHERE id = $2', ['rejected', id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Extractions API] POST /:id/reject error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/extractions/source-message/:id
+router.get('/source-message/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
+    
+    const result = await supabase.query('SELECT text FROM messages WHERE id = $1', [id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Message not found' });
+    }
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });

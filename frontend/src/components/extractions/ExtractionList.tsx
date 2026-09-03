@@ -12,6 +12,7 @@ interface ExtractionListProps {
   error: string | null;
   onRetry: () => void;
   onViewDetails: (extraction: Extraction) => void;
+  onOpenChat?: (jid?: string, messageText?: string) => void;
   onConfirm?: (extraction: Extraction) => void;
   onReject?: (extraction: Extraction) => void;
 }
@@ -22,6 +23,7 @@ export const ExtractionList: React.FC<ExtractionListProps> = ({
   error,
   onRetry,
   onViewDetails,
+  onOpenChat,
   onConfirm,
   onReject
 }) => {
@@ -68,6 +70,7 @@ export const ExtractionList: React.FC<ExtractionListProps> = ({
         <ExtractionCard 
           extraction={item} 
           onViewDetails={onViewDetails}
+          onOpenChat={onOpenChat}
           onConfirm={onConfirm}
           onReject={onReject}
         />

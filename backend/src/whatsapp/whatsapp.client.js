@@ -56,13 +56,20 @@ class WhatsAppClient {
       });
 
       // Handle request for specific chat messages
-      clientSocket.on('whatsapp:request_messages', (data) => {
+      clientSocket.on('whatsapp:request_messages', async (data) => {
         const jid = data?.jid;
         if (jid) {
-          clientSocket.emit('whatsapp:chat_messages', {
-            jid,
-            messages: this.realtimeMessages.get(jid) || []
-          });
+          try {
+            const messageService = require('../services/message.service');
+            const recentMessages = await messageService.getChatMessages(jid, 6);
+            
+            clientSocket.emit('whatsapp:chat_messages', {
+              jid,
+              messages: recentMessages
+            });
+          } catch (err) {
+            console.error('Error fetching chat messages via socket:', err.message);
+          }
         }
       });
 
@@ -89,11 +96,6 @@ class WhatsAppClient {
   getSortedChats() {
     const chatList = Array.from(this.realtimeChats.values());
     return chatList.sort((a, b) => {
-      // Priority 1: Needs Reply
-      if (a.needs_reply && !b.needs_reply) return -1;
-      if (!a.needs_reply && b.needs_reply) return 1;
-
-      // Priority 2: Newest message timestamp
       const timeA = new Date(a.last_message_timestamp).getTime() || 0;
       const timeB = new Date(b.last_message_timestamp).getTime() || 0;
       return timeB - timeA;
@@ -108,6 +110,7 @@ class WhatsAppClient {
     if (m.ephemeralMessage?.message) m = m.ephemeralMessage.message;
     else if (m.viewOnceMessage?.message) m = m.viewOnceMessage.message;
     else if (m.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message;
+    else if (m.documentWithCaptionMessage?.message) m = m.documentWithCaptionMessage.message;
 
     return (
       m.conversation || 
@@ -115,25 +118,42 @@ class WhatsAppClient {
       m.imageMessage?.caption || 
       m.videoMessage?.caption || 
       m.documentMessage?.caption || 
+      m.buttonsResponseMessage?.selectedDisplayText ||
       m.buttonsResponseMessage?.selectedButtonId || 
       m.listResponseMessage?.title || 
+      m.listResponseMessage?.description ||
+      m.templateButtonReplyMessage?.selectedDisplayText ||
       m.templateButtonReplyMessage?.selectedId ||
-      (m.audioMessage ? 'Audio Message' : null) ||
-      (m.stickerMessage ? 'Sticker' : null) ||
-      (m.contactMessage ? 'Contact' : null) ||
-      (m.locationMessage ? 'Location' : null) ||
+      (m.imageMessage ? '📷 Photo' : null) ||
+      (m.videoMessage ? '🎥 Video' : null) ||
+      (m.documentMessage ? '📄 Document' : null) ||
+      (m.audioMessage ? '🎵 Voice message' : null) ||
+      (m.stickerMessage ? '✨ Sticker' : null) ||
+      (m.contactMessage ? '👤 Contact' : null) ||
+      (m.locationMessage ? '📍 Location' : null) ||
+      (m.pollCreationMessage ? '📊 Poll: ' + (m.pollCreationMessage.name || '') : null) ||
       null
     );
   }
   getTimestampMs(ts) {
     if (!ts) return Date.now();
-    if (typeof ts === 'number') return ts * 1000;
-    if (typeof ts === 'object' && 'low' in ts) return ts.low * 1000;
+    if (typeof ts === 'number') {
+      return ts < 1000000000000 ? ts * 1000 : ts;
+    }
+    if (typeof ts === 'object') {
+      const num = Number(ts.low !== undefined ? ts.low : ts);
+      return num < 1000000000000 ? num * 1000 : num;
+    }
+    const parsed = Number(ts);
+    if (!isNaN(parsed)) {
+      return parsed < 1000000000000 ? parsed * 1000 : parsed;
+    }
     return Date.now();
   }
 
   addRealtimeMessage(jid, text, timestampMs, fromMe, pushName, msgId, isHistory = false) {
     if (!jid || jid.endsWith('@newsletter') || jid.endsWith('@lid')) return;
+    if (!text || text.trim() === '') return;
 
     const canonicalJid = getCanonicalJid(jid);
     const msgDate = new Date(timestampMs).toISOString();
@@ -144,17 +164,20 @@ class WhatsAppClient {
       sender_jid: fromMe ? 'me' : jid,
       from_me: fromMe,
       text,
-      timestamp: msgDate
+      timestamp: msgDate,
+      message_type: 'text'
     };
 
     // Store in message history for this chat
     if (!this.realtimeMessages.has(canonicalJid)) {
       this.realtimeMessages.set(canonicalJid, []);
     }
+    let isNewMsg = false;
     const msgs = this.realtimeMessages.get(canonicalJid);
     if (!msgs.some(m => m.id === msgObj.id)) {
       msgs.push(msgObj);
       msgs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      isNewMsg = true;
     }
 
     // Resolve Name
@@ -199,7 +222,6 @@ class WhatsAppClient {
     if (existing && existing.last_message_timestamp) {
       const existingTs = new Date(existing.last_message_timestamp).getTime();
       const currentTs = new Date(msgDate).getTime();
-      // Only overwrite if this message is newer than what we already have
       if (existingTs > currentTs) {
         finalLastMsgText = existing.last_message_text;
         finalLastMsgTs = existing.last_message_timestamp;
@@ -217,7 +239,9 @@ class WhatsAppClient {
 
     // Notify clients only if it's not history sync (history sync will bulk emit)
     if (!isHistory) {
-      this.emit('whatsapp:new_message', { jid: canonicalJid, message: msgObj });
+      if (isNewMsg) {
+        this.emit('whatsapp:new_message', { jid: canonicalJid, message: msgObj });
+      }
       this.emit('whatsapp:realtime_chats', { chats: this.getSortedChats() });
     }
   }
@@ -298,8 +322,32 @@ class WhatsAppClient {
           this.latestQr = null;
           this.latestPairingCode = null;
           console.log('✓ [WhatsAppClient] PAIRING SUCCESSFUL & CONNECTED!');
+
+          const rawConnectedId = this.socket?.user?.id || '';
+          const connectedJid = getCanonicalJid(rawConnectedId);
+          console.log(`[WhatsAppClient] Connected as user: ${connectedJid}`);
+
+          // Check if session owner changed to prevent mixing contacts & chats between different users
+          const prevOwner = auth.getSessionOwner();
+          if (connectedJid && prevOwner && prevOwner !== connectedJid) {
+            console.log(`[WhatsAppClient] New account connected (${connectedJid} != ${prevOwner}). Purging old account data from database and memory.`);
+            this.realtimeChats.clear();
+            this.realtimeMessages.clear();
+            this.contactNames.clear();
+            
+            try {
+              const supabase = require('../config/supabase');
+              await supabase.query('DELETE FROM extractions; DELETE FROM messages; DELETE FROM contacts;');
+            } catch (e) {
+              console.error('[WhatsAppClient] Error purging old account DB data:', e.message);
+            }
+          }
+          if (connectedJid) {
+            auth.saveSessionOwner(connectedJid);
+          }
+
           this.updateStatus('CONNECTED');
-          this.emit('whatsapp:connected', { status: 'connected' });
+          this.emit('whatsapp:connected', { status: 'connected', user: connectedJid });
         } else if (connection === 'close') {
           this.isConnecting = false;
           const statusCode = lastDisconnect?.error?.output?.statusCode || 
@@ -313,6 +361,14 @@ class WhatsAppClient {
             this.latestQr = null;
             this.latestPairingCode = null;
             this.socket = null;
+            
+            // Auto wipe DB on disconnect/logout
+            try {
+              const supabase = require('../config/supabase');
+              supabase.query('DELETE FROM extractions; DELETE FROM messages; DELETE FROM contacts;').catch(e => console.error(e));
+              console.log('[WhatsAppClient] Database wiped clean on logout.');
+            } catch (err) {}
+
             this.updateStatus('LOGGED_OUT');
             this.emit('whatsapp:logged_out', { status: 'logged_out' });
           } else {
@@ -325,29 +381,34 @@ class WhatsAppClient {
         }
       });
 
-      this.socket.ev.on('contacts.upsert', (contacts) => {
+      this.socket.ev.on('contacts.upsert', async (contacts) => {
         let hasNew = false;
         for (const c of contacts) {
-          if (c.id && (c.name || c.verifiedName)) {
+          if (c.id && (c.name || c.verifiedName || c.pushname)) {
             const canonical = getCanonicalJid(c.id);
-            const resolvedName = c.name || c.verifiedName;
+            const resolvedName = c.name || c.verifiedName || c.pushname;
             this.contactNames.set(canonical, resolvedName);
             
-            if (!this.realtimeChats.has(canonical) && !canonical.endsWith('@lid')) {
-              this.realtimeChats.set(canonical, {
-                jid: canonical,
-                name: resolvedName,
-                last_message_text: 'Tap to start chat',
-                last_message_timestamp: new Date(0).toISOString(),
-                needs_reply: false,
-                unread_count: 0
-              });
-              hasNew = true;
+            // Persist the phonebook name to the database
+            try {
+              await contactService.findOrCreateContact({ jid: canonical, name: resolvedName });
+            } catch (err) {
+              console.error('[WhatsAppClient] Failed to save contact:', err.message);
             }
           }
         }
-        if (hasNew) {
-           this.emit('whatsapp:realtime_chats', { chats: this.getSortedChats() });
+      });
+
+      this.socket.ev.on('groups.upsert', async (groups) => {
+        for (const group of groups) {
+          if (group.id && (group.name || group.subject)) {
+            const canonical = getCanonicalJid(group.id);
+            const resolvedName = group.name || group.subject;
+            this.contactNames.set(canonical, resolvedName);
+            try {
+              await contactService.findOrCreateContact({ jid: canonical, name: resolvedName });
+            } catch (err) {}
+          }
         }
       });
 
@@ -376,9 +437,27 @@ class WhatsAppClient {
         // Load contacts first so we have their names
         if (contacts) {
           for (const c of contacts) {
-            if (c.id && (c.name || c.verifiedName)) {
+            if (c.id && (c.name || c.verifiedName || c.pushname)) {
               const canonical = getCanonicalJid(c.id);
-              this.contactNames.set(canonical, c.name || c.verifiedName);
+              const resolvedName = c.name || c.verifiedName || c.pushname;
+              this.contactNames.set(canonical, resolvedName);
+              // Save to database
+              try {
+                await contactService.findOrCreateContact({ jid: canonical, name: resolvedName });
+              } catch (err) {}
+            }
+          }
+        }
+        
+        // Load group names from chats
+        if (chats) {
+          for (const chat of chats) {
+            if (chat.id && chat.name) {
+              const canonical = getCanonicalJid(chat.id);
+              this.contactNames.set(canonical, chat.name);
+              try {
+                await contactService.findOrCreateContact({ jid: canonical, name: chat.name });
+              } catch (err) {}
             }
           }
         }
@@ -431,19 +510,7 @@ class WhatsAppClient {
           }
         }
         
-        // Ensure ALL contacts appear in the left sidebar even if there's no chat history yet!
-        for (const [canonicalJid, name] of this.contactNames.entries()) {
-          if (!this.realtimeChats.has(canonicalJid) && !canonicalJid.endsWith('@lid')) {
-             this.realtimeChats.set(canonicalJid, {
-               jid: canonicalJid,
-               name: name || formatPhoneNumber(canonicalJid.split('@')[0]),
-               last_message_text: 'Tap to start chat',
-               last_message_timestamp: new Date(0).toISOString(), // very old, will sort at bottom
-               needs_reply: false,
-               unread_count: 0
-             });
-          }
-        }
+
         
         // Emit updated chats list after processing history
         this.emit('whatsapp:realtime_chats', { chats: this.getSortedChats() });
@@ -503,6 +570,15 @@ class WhatsAppClient {
   getStatus() { return this.status; }
   getQR() { return this.latestQr; }
   getPairingCode() { return this.latestPairingCode; }
+
+  getCurrentSessionContacts() {
+    // Return contacts directly from active session memory
+    const contacts = [];
+    for (const [jid, name] of this.contactNames.entries()) {
+      contacts.push({ jid, name });
+    }
+    return contacts;
+  }
   async disconnect() {
     console.log('[WhatsAppClient] Disconnecting and clearing session...');
     
@@ -520,7 +596,7 @@ class WhatsAppClient {
       this.socket = null;
     }
     
-    // 2. Clear Auth Folder
+    // 2. Clear Auth Folder and Session Owner
     auth.clearSession();
     
     // 3. Clear in-memory caches completely so the new user doesn't see old contacts
@@ -528,7 +604,16 @@ class WhatsAppClient {
     this.realtimeMessages.clear();
     this.contactNames.clear();
     
-    // 4. Update status and notify clients
+    // 4. Wipe DB tables so no data remains for disconnected user
+    try {
+      const supabase = require('../config/supabase');
+      await supabase.query('DELETE FROM extractions; DELETE FROM messages; DELETE FROM contacts;');
+      console.log('[WhatsAppClient] Database wiped clean on disconnect.');
+    } catch (err) {
+      console.error('[WhatsAppClient] Error wiping DB on disconnect:', err.message);
+    }
+
+    // 5. Update status and notify clients
     this.isConnecting = false;
     this.latestQr = null;
     this.latestPairingCode = null;

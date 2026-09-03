@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { formatPhoneNumber } = require('../whatsapp/whatsapp.utils');
 
 /**
  * Find contact by WhatsApp JID
@@ -19,7 +20,8 @@ async function findContactByJid(jid) {
  * @param {string} param0.name
  */
 async function createContact({ jid, name }) {
-  const formattedName = name || jid.split('@')[0];
+  const isGroup = jid.endsWith('@g.us');
+  const formattedName = name || (isGroup ? 'Group' : formatPhoneNumber(jid.split('@')[0]));
   const result = await supabase.query(
     `INSERT INTO contacts (jid, name, layer, city, muted, excluded, vip, created_at, updated_at)
      VALUES ($1, $2, null, null, false, false, false, NOW(), NOW())
@@ -30,14 +32,23 @@ async function createContact({ jid, name }) {
 }
 
 /**
- * Find or create contact by JID
+ * Find or create contact by JID, and update the name if necessary
  * @param {Object} param0
  * @param {string} param0.jid
  * @param {string} param0.name
  */
 async function findOrCreateContact({ jid, name }) {
   const existing = await findContactByJid(jid);
+  const isGroup = jid.endsWith('@g.us');
+  const defaultFormatted = isGroup ? 'Group' : formatPhoneNumber(jid.split('@')[0]);
+  
   if (existing) {
+    // If we have a valid new name and it's different from the existing one, update it.
+    // Also update if the existing name was just the phone number (or missing) and we now have a real name.
+    if (name && existing.name !== name && (existing.name === jid.split('@')[0] || existing.name === defaultFormatted)) {
+      await supabase.query('UPDATE contacts SET name = $1, updated_at = NOW() WHERE jid = $2', [name, jid]);
+      existing.name = name;
+    }
     return existing;
   }
   try {

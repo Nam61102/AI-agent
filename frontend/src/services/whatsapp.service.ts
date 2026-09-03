@@ -20,8 +20,7 @@ export interface WhatsAppServiceListener {
   onChatMessages?: (data: { jid: string; messages: any[] }) => void;
 }
 
-const BACKEND_URL = 'http://127.0.0.1:3000';
-
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string;
 class WhatsAppService {
   private socket: Socket | null = null;
   private listeners: Set<WhatsAppServiceListener> = new Set();
@@ -146,9 +145,18 @@ class WhatsAppService {
     };
   }
 
-  public requestChatMessages(jid: string) {
-    if (this.socket) {
-      this.socket.emit('whatsapp:request_messages', { jid });
+  public async requestChatMessages(jid: string) {
+    if (this.isMockMode) return;
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/chat-messages/${encodeURIComponent(jid)}?hours=6`);
+      const data = await response.json();
+      if (data.success && data.messages) {
+        // We still use the socket listener architecture by simulating the socket event 
+        // to keep the frontend state management clean
+        this.listeners.forEach((l) => l.onChatMessages?.({ jid, messages: data.messages }));
+      }
+    } catch (error) {
+      console.error('[WhatsAppService] Failed to fetch individual chat messages:', error);
     }
   }
 
@@ -219,17 +227,33 @@ class WhatsAppService {
     }
   }
 
-  public async fetchChats(): Promise<any[]> {
+  public async fetchChats(hours: number = 6): Promise<any[]> {
     if (this.isMockMode) return [];
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/whatsapp/chats`);
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/recent-chats?hours=${hours}`);
       const data = await response.json();
-      if (data.success && Array.isArray(data.chats)) {
+      if (data.success && data.chats) {
         return data.chats;
       }
+      return [];
+    } catch (err) {
+      console.error('[WhatsAppService] Failed to fetch chats:', err);
+      return [];
+    }
+  }
+
+  public async fetchCurrentContacts(): Promise<any[]> {
+    if (this.isMockMode) return [];
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/current-contacts`);
+      const data = await response.json();
+      if (data.success && Array.isArray(data.contacts)) {
+        return data.contacts;
+      }
     } catch (error) {
-      console.error('[WhatsAppService] Failed to fetch chats:', error);
+      console.error('[WhatsAppService] Failed to fetch contacts:', error);
     }
 
     return [];

@@ -38,9 +38,15 @@ export interface ChatMessage {
 
 interface WhatsAppChatListScreenProps {
   onBackPress: () => void;
+  initialChatJid?: string;
+  highlightMessageText?: string;
 }
 
-export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ onBackPress }) => {
+export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
+  onBackPress,
+  initialChatJid,
+  highlightMessageText
+}) => {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -52,7 +58,9 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
   const [sending, setSending] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'priority' | 'unread' | 'groups'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'priority' | 'unread' | 'groups' | 'contacts'>('all');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [contactsList, setContactsList] = useState<any[]>([]);
 
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -61,12 +69,35 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
     activeChatRef.current = activeChat;
   }, [activeChat]);
 
+  const handleManualSync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const recentChats = await whatsappService.fetchChats(6);
+      if (recentChats) {
+        setChats(formatChats(recentChats));
+      }
+      if (activeChatRef.current) {
+        await whatsappService.requestChatMessages(activeChatRef.current.jid);
+      }
+    } catch (e) {
+      console.error('[WhatsAppChatListScreen] Sync error:', e);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   useEffect(() => {
     const initChats = async () => {
       setLoadingChats(true);
       const initialChats = await whatsappService.fetchChats();
       if (initialChats && initialChats.length > 0) {
-        setChats(formatChats(initialChats));
+        const formatted = formatChats(initialChats);
+        setChats(formatted);
+        if (initialChatJid) {
+          const match = formatted.find(c => c.jid === initialChatJid || c.jid.split('@')[0] === initialChatJid.split('@')[0]);
+          if (match) setActiveChat(match);
+        }
       }
       setLoadingChats(false);
     };
@@ -75,26 +106,83 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
 
     const unsubscribe = whatsappService.subscribe({
       onRealtimeChats: (realtimeChats) => {
-        setChats(formatChats(realtimeChats));
+        const sixHoursAgo = Date.now() - (6 * 60 * 60 * 1000);
+        const recentChats = realtimeChats.filter((c: any) => {
+          if (!c.last_message_text || c.last_message_text === 'Tap to start chat' || c.last_message_text.trim() === '') return false;
+          const msgTime = new Date(c.last_message_timestamp).getTime();
+          return msgTime >= sixHoursAgo;
+        });
+        setChats(formatChats(recentChats));
         setLoadingChats(false);
+
+        // Auto-refresh active chat in real-time when new messages arrive
+        if (activeChatRef.current) {
+          const activeBase = activeChatRef.current.jid.split('@')[0].split(':')[0];
+          const hasUpdate = recentChats.some((c: any) => c.jid.split('@')[0].split(':')[0] === activeBase);
+          if (hasUpdate) {
+            whatsappService.requestChatMessages(activeChatRef.current.jid);
+          }
+        }
       },
       onNewMessage: (data) => {
-        if (activeChatRef.current && data.jid === activeChatRef.current.jid) {
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === data.message.id)) return prev;
-            return [...prev, data.message];
-          });
+        if (!data || !data.jid || !data.message) return;
+        const msgText = data.message.text ? data.message.text.trim() : '';
+        if (!msgText) return; // Skip blank messages
+
+        if (activeChatRef.current) {
+          const activeBase = activeChatRef.current.jid.split('@')[0].split(':')[0];
+          const targetBase = data.jid.split('@')[0].split(':')[0];
+          if (activeBase === targetBase) {
+            setMessages((prev) => {
+              // Deduplicate by ID or identical text + timestamp
+              const isDuplicate = prev.some((m) => 
+                m.id === data.message.id || 
+                (m.from_me === data.message.from_me && m.text === data.message.text && Math.abs(new Date(m.timestamp).getTime() - new Date(data.message.timestamp).getTime()) < 3000)
+              );
+              if (isDuplicate) return prev;
+              return [...prev, data.message];
+            });
+          }
         }
       },
       onChatMessages: (data) => {
-        if (activeChatRef.current && data.jid === activeChatRef.current.jid) {
-          setMessages(data.messages || []);
+        if (!data || !data.jid) return;
+        if (activeChatRef.current) {
+          const activeBase = activeChatRef.current.jid.split('@')[0].split(':')[0];
+          const targetBase = data.jid.split('@')[0].split(':')[0];
+          if (activeBase === targetBase) {
+            const validMessages = (data.messages || []).filter((m: any) => m.text && m.text.trim() !== '');
+            
+            setMessages((prev) => {
+              if (validMessages.length === 0) return prev;
+              
+              // Smart merge: preserve any recently added real-time messages not yet persisted in DB
+              const dbTexts = new Set(validMessages.map((m: any) => `${m.text}_${m.from_me ? 'me' : 'them'}_${m.timestamp ? m.timestamp.slice(0, 16) : ''}`));
+              
+              const uncommitted = prev.filter((m: any) => {
+                const isTemp = typeof m.id === 'string' && (m.id.startsWith('sent_') || m.id.startsWith('msg_') || m.id.length > 20);
+                if (!isTemp) return false;
+                const textKey = `${m.text}_${m.from_me ? 'me' : 'them'}_${m.timestamp ? m.timestamp.slice(0, 16) : ''}`;
+                return !dbTexts.has(textKey);
+              });
+
+              return [...validMessages, ...uncommitted];
+            });
+          }
         }
       }
     });
 
+    // 3-second WhatsApp Web heartbeat sync for active chat
+    const heartbeatInterval = setInterval(async () => {
+      if (activeChatRef.current) {
+        whatsappService.requestChatMessages(activeChatRef.current.jid);
+      }
+    }, 3000);
+
     return () => {
       unsubscribe();
+      clearInterval(heartbeatInterval);
     };
   }, []);
 
@@ -109,6 +197,28 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 100);
   }, [messages]);
+
+  useEffect(() => {
+    if (activeFilter === 'contacts' && contactsList.length === 0) {
+      const fetchContacts = async () => {
+        setLoadingChats(true);
+        const contacts = await whatsappService.fetchCurrentContacts();
+        const formatted = contacts.map((c: any) => ({
+          jid: c.jid,
+          name: cleanContactName(c.name || c.jid.split('@')[0]),
+          is_group: false,
+          last_message_text: 'Tap to start chat',
+          last_message_timestamp: '',
+          raw_timestamp: 0,
+          needs_reply: false,
+          unread_count: 0
+        }));
+        setContactsList(formatted);
+        setLoadingChats(false);
+      };
+      fetchContacts();
+    }
+  }, [activeFilter]);
 
   const cleanContactName = (name: string) => {
     return name ? name.trim() : 'Unknown Contact';
@@ -142,7 +252,9 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
     });
   };
 
-  const filteredChats = chats.filter(c => {
+  const activeData = activeFilter === 'contacts' ? contactsList : chats;
+
+  const filteredChats = activeData.filter(c => {
     if (searchQuery && !c.name.toLowerCase().includes(searchQuery.toLowerCase()) && !c.jid.includes(searchQuery)) {
       return false;
     }
@@ -152,11 +264,9 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
     return true;
   });
 
-  const sortedChats = [...filteredChats].sort((a, b) => {
-    if (a.needs_reply && !b.needs_reply) return -1;
-    if (!a.needs_reply && b.needs_reply) return 1;
-    return b.raw_timestamp - a.raw_timestamp;
-  });
+  const sortedChats = activeFilter === 'contacts' 
+    ? [...filteredChats].sort((a, b) => a.name.localeCompare(b.name))
+    : [...filteredChats].sort((a, b) => b.raw_timestamp - a.raw_timestamp);
 
   const handleSendMessage = async () => {
     if (!activeChat || !inputText.trim()) return;
@@ -165,17 +275,21 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
     setInputText('');
     setSending(true);
 
-    await whatsappService.sendMessage(activeChat.jid, textToSend);
-
+    const tempId = 'sent_' + Date.now();
     const optMsg: ChatMessage = {
-      id: 'opt_' + Date.now(),
+      id: tempId,
       chat_jid: activeChat.jid,
       sender_jid: 'me',
       from_me: true,
       text: textToSend,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      message_type: 'text'
     };
+
+    // Optimistically show message immediately
     setMessages((prev) => [...prev, optMsg]);
+
+    await whatsappService.sendMessage(activeChat.jid, textToSend);
 
     setChats((prev) =>
       prev.map((c) =>
@@ -183,7 +297,7 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
           ? { 
               ...c, 
               last_message_text: textToSend, 
-              last_message_timestamp: 'Just now',
+              last_message_timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               raw_timestamp: Date.now(),
               needs_reply: false, 
               unread_count: 0 
@@ -260,9 +374,28 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
                 <Text style={styles.backButtonIcon}>‹</Text>
                 <Text style={styles.backButtonText}>Dashboard</Text>
               </TouchableOpacity>
-              <View style={styles.onlineBadge}>
-                <View style={styles.onlineDot} />
-                <Text style={styles.onlineText}>Connected</Text>
+              
+              <View style={styles.topNavRight}>
+                {isSyncing ? (
+                  <View style={styles.syncingPill}>
+                    <ActivityIndicator color="#10B981" size="small" style={{ marginRight: 4 }} />
+                    <Text style={styles.syncingText}>Syncing...</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity 
+                    style={styles.syncButton} 
+                    onPress={handleManualSync}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.syncButtonIcon}>🔄</Text>
+                    <Text style={styles.syncButtonText}>Sync</Text>
+                  </TouchableOpacity>
+                )}
+                
+                <View style={styles.onlineBadge}>
+                  <View style={styles.onlineDot} />
+                  <Text style={styles.onlineText}>Connected</Text>
+                </View>
               </View>
             </View>
 
@@ -279,7 +412,7 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
                 />
               </View>
               <View style={styles.filterTabsRow}>
-                {(['all', 'priority', 'unread', 'groups'] as const).map(filter => (
+                {(['all', 'priority', 'unread', 'groups', 'contacts'] as const).map(filter => (
                   <TouchableOpacity
                     key={filter}
                     style={[styles.filterTab, activeFilter === filter && styles.filterTabActive]}
@@ -335,8 +468,19 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
                   </View>
                   <View style={styles.headerChatInfo}>
                     <Text style={styles.activeChatName}>{activeChat.name}</Text>
-                    <Text style={styles.activeChatSubtext}>{activeChat.jid.split('@')[0]}</Text>
+                    <Text style={styles.activeChatSubtext}>{activeChat.is_group ? 'WhatsApp Group' : 'WhatsApp Contact'}</Text>
                   </View>
+                  
+                  {/* Chat Window Sync button */}
+                  <TouchableOpacity 
+                    style={[styles.activeChatSyncBtn, isSyncing && styles.syncButtonDisabled]} 
+                    onPress={handleManualSync}
+                    disabled={isSyncing}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.activeChatSyncIcon}>🔄</Text>
+                    <Text style={styles.activeChatSyncText}>{isSyncing ? 'Syncing...' : 'Sync'}</Text>
+                  </TouchableOpacity>
                 </View>
 
                 {/* MESSAGES LIST */}
@@ -345,33 +489,48 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({ 
                   style={styles.messagesContainer}
                   contentContainerStyle={styles.messagesContent}
                 >
-                  {messages.length === 0 ? (
+                  {messages.filter((msg) => msg.text && msg.text.trim() !== '').length === 0 ? (
                     <View style={styles.noMessagesBox}>
                       <Text style={styles.noMessagesText}>Start of conversation</Text>
                     </View>
                   ) : (
-                    messages.map((msg) => {
-                      const isMe = msg.from_me;
-                      const timeStr = msg.timestamp
-                        ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                        : '';
+                    messages
+                      .filter((msg) => msg.text && msg.text.trim() !== '')
+                      .map((msg) => {
+                        const isMe = msg.from_me;
+                        const isHighlighted = Boolean(
+                          highlightMessageText &&
+                          msg.text &&
+                          (msg.text.toLowerCase().includes(highlightMessageText.toLowerCase()) ||
+                            highlightMessageText.toLowerCase().includes(msg.text.toLowerCase()))
+                        );
+                        const timeStr = msg.timestamp
+                          ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                          : '';
 
-                      return (
-                        <View key={msg.id} style={[styles.messageRow, isMe ? styles.myMessageRow : styles.theirMessageRow]}>
-                          <View style={[styles.messageBubble, isMe ? styles.myMessageBubble : styles.theirMessageBubble]}>
-                            <Text style={[styles.messageText, isMe ? styles.myMessageText : styles.theirMessageText]}>
-                              {msg.text}
-                            </Text>
-                            <View style={styles.messageFooter}>
-                              <Text style={[styles.messageTime, isMe ? styles.myMessageTime : styles.theirMessageTime]}>
-                                {timeStr}
+                        return (
+                          <View key={msg.id} style={[styles.messageRow, isMe ? styles.myMessageRow : styles.theirMessageRow]}>
+                            <View style={[
+                              styles.messageBubble, 
+                              isMe ? styles.myMessageBubble : styles.theirMessageBubble,
+                              isHighlighted && styles.highlightedMessageBubble
+                            ]}>
+                              {isHighlighted && (
+                                <Text style={styles.highlightBadge}>SOURCE MESSAGE</Text>
+                              )}
+                              <Text style={[styles.messageText, isMe ? styles.myMessageText : styles.theirMessageText]}>
+                                {msg.text}
                               </Text>
-                              {isMe && <Text style={styles.readReceipt}>✓✓</Text>}
+                              <View style={styles.messageFooter}>
+                                <Text style={[styles.messageTime, isMe ? styles.myMessageTime : styles.theirMessageTime]}>
+                                  {timeStr}
+                                </Text>
+                                {isMe && <Text style={styles.readReceipt}>✓✓</Text>}
+                              </View>
                             </View>
                           </View>
-                        </View>
-                      );
-                    })
+                        );
+                      })
                   )}
                 </ScrollView>
 
@@ -459,6 +618,70 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontSize: 14,
     fontWeight: '500'
+  },
+  topNavRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  syncButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    cursor: 'pointer' as any
+  },
+  syncButtonIcon: {
+    fontSize: 12,
+    marginRight: 4
+  },
+  syncButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A'
+  },
+  syncButtonDisabled: {
+    opacity: 0.6
+  },
+  syncingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8
+  },
+  syncingText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#059669'
+  },
+  activeChatSyncBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginLeft: 'auto',
+    cursor: 'pointer' as any
+  },
+  activeChatSyncIcon: {
+    fontSize: 12,
+    marginRight: 4
+  },
+  activeChatSyncText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A'
   },
   onlineBadge: {
     flexDirection: 'row',
@@ -754,6 +977,18 @@ const styles = StyleSheet.create({
   theirMessageBubble: {
     backgroundColor: '#E2E8F0',
     borderBottomLeftRadius: 4
+  },
+  highlightedMessageBubble: {
+    borderWidth: 2,
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF'
+  },
+  highlightBadge: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#2563EB',
+    letterSpacing: 0.5,
+    marginBottom: 4
   },
   messageText: {
     fontSize: 14,

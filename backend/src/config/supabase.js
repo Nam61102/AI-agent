@@ -12,4 +12,9 @@ const supabase = new Pool({
   max: 5
 });
 
+// Prevent unhandled pool errors from crashing the backend
+supabase.on('error', (err) => {
+  console.error('[Supabase Pool] Unexpected error on idle client', err.message);
+});
+
 module.exports = supabase;
