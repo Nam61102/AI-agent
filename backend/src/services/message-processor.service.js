@@ -155,6 +155,8 @@ class MessageProcessorService {
           ? 'Birthday' 
           : action_type === 'follow_up' 
           ? 'Follow Up' 
+          : action_type === 'incident'
+          ? 'Urgent Incident'
           : 'Reply Needed';
 
         if (event_details?.title) {
@@ -201,7 +203,7 @@ class MessageProcessorService {
             [message.id]
           );
           if (checkExtr.rows.length === 0) {
-            const extrType = action_type === 'birthday' ? 'life_event' : 'task';
+            const extrType = action_type === 'birthday' ? 'life_event' : action_type === 'incident' ? 'incident' : 'task';
             await supabase.query(
               `INSERT INTO extractions (contact_id, source_message_id, type, payload, confidence, status)
                VALUES ($1, $2, $3, $4, 0.95, 'active')`,

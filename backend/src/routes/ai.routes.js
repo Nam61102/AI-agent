@@ -7,5 +7,6 @@ router.get('/actions/:id', controller.getActionById);
 router.patch('/actions/:id/dismiss', controller.dismissAction);
 router.get('/summary', controller.getDashboardSummary);
 router.post('/analyze-active', controller.analyzeActiveChats);
+router.post('/suggest-reply', controller.suggestReply);
 
 module.exports = router;

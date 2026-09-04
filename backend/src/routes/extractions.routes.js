@@ -10,6 +10,7 @@ router.get('/', async (req, res) => {
     
     let query = `
       SELECT e.*, m.text AS source_text, m.sender_jid, m.chat_jid,
+        sr.suggested_reply, sr.reason AS reply_reason, sr.tone AS reply_tone,
         chat.name AS db_chat_name,
         sender.name AS db_sender_name,
         m.from_me
@@ -17,7 +18,8 @@ router.get('/', async (req, res) => {
       LEFT JOIN messages m ON m.id = e.source_message_id
       LEFT JOIN contacts sender ON sender.jid = m.sender_jid
       LEFT JOIN contacts chat ON chat.jid = m.chat_jid
-      WHERE e.type != 'none'`;
+      LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending'
+      WHERE e.type != 'none' AND e.confidence >= 0.90`;
     
     const values = [];
     let paramIndex = 1;
@@ -63,6 +65,7 @@ router.get('/:id', async (req, res) => {
 
     const result = await supabase.query(
       `SELECT e.*, m.text AS source_text, m.sender_jid, m.chat_jid,
+        sr.suggested_reply, sr.reason AS reply_reason, sr.tone AS reply_tone,
         chat.name AS db_chat_name,
         sender.name AS db_sender_name,
         m.from_me
@@ -70,6 +73,7 @@ router.get('/:id', async (req, res) => {
        LEFT JOIN messages m ON m.id = e.source_message_id
        LEFT JOIN contacts sender ON sender.jid = m.sender_jid
        LEFT JOIN contacts chat ON chat.jid = m.chat_jid
+      LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending'
        WHERE e.id = $1 AND e.type != 'none'`,
       [id]
     );

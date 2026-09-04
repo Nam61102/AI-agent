@@ -1,5 +1,41 @@
 const supabase = require('../config/supabase');
 const { formatPhoneNumber } = require('../whatsapp/whatsapp.utils');
+const replyService = require('../ai/reply.service');
+
+async function suggestReply(req, res) {
+  try {
+    const { jid, text } = req.body;
+    if (!jid || !text) return res.status(400).json({ success: false, error: 'jid and text are required' });
+
+    const [contactResult, messagesResult] = await Promise.all([
+      supabase.query('SELECT name FROM contacts WHERE jid = $1 LIMIT 1', [jid]),
+      supabase.query(
+        `SELECT sender_jid, from_me, text, timestamp FROM messages
+         WHERE chat_jid = $1 AND text IS NOT NULL AND TRIM(text) != ''
+         ORDER BY timestamp DESC LIMIT 20`,
+        [jid]
+      )
+    ]);
+
+    const result = await replyService.generateReply({
+      contact: { name: contactResult.rows[0]?.name || formatPhoneNumber(jid.split('@')[0]), jid },
+      conversationHistory: messagesResult.rows.reverse(),
+      currentMessage: { text, timestamp: new Date().toISOString(), sender: contactResult.rows[0]?.name }
+    });
+
+    if (!result.success) {
+      const fallbackReply = /birthday/i.test(text)
+        ? 'Happy Birthday! I hope you have a wonderful day. Let me know how you would like to celebrate.'
+        : `Thanks for sharing this. I will get back to you shortly.`;
+      console.warn('[AIController] Reply generation unavailable, using fallback:', result.error);
+      return res.json({ success: true, data: { suggested_reply: fallbackReply, aiGenerated: false } });
+    }
+    return res.json({ success: true, data: result.data });
+  } catch (error) {
+    console.error('[AIController] suggestReply error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
 
 async function getActions(req, res) {
   try {
@@ -239,6 +275,7 @@ async function analyzeActiveChats(req, res) {
 }
 
 module.exports = {
+  suggestReply,
   getActions,
   getActionById,
   dismissAction,

@@ -13,6 +13,12 @@ const extractionsRoutes = require('./src/routes/extractions.routes');
 const whatsappClient = require('./src/whatsapp/whatsapp.client');
 const messageProcessor = require('./src/services/message-processor.service');
 
+process.on('unhandledRejection', (reason) => {
+  if (!whatsappClient.handleUnhandledError(reason)) {
+    console.error('[Process] Unhandled promise rejection:', reason);
+  }
+});
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -50,6 +56,7 @@ const aiRoutes = require('./src/routes/ai.routes');
 // WhatsApp API endpoints
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/extractions', extractionsRoutes);
+app.use('/api/contacts', require('./src/routes/contacts.routes'));
 app.use('/api/ai', aiRoutes);
 app.use('/api/dashboard', aiRoutes);
 

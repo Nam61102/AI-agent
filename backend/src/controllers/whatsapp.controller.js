@@ -95,6 +95,11 @@ const messageService = require('../services/message.service');
 
 async function getChats(req, res) {
   try {
+    const auth = require('../whatsapp/whatsapp.auth');
+    if (!auth.sessionExists()) {
+      return res.status(200).json({ success: true, chats: [] });
+    }
+
     const realtimeChats = whatsappClient.getSortedChats();
     const storedChats = await messageService.getChats();
     const chatsByJid = new Map(storedChats.map(chat => [chat.jid, chat]));
@@ -182,6 +187,10 @@ async function getCurrentContacts(req, res) {
 
 async function getRecentChats(req, res) {
   try {
+    const auth = require('../whatsapp/whatsapp.auth');
+    if (!auth.sessionExists()) {
+      return res.status(200).json({ success: true, timeframe: 'Last 6 hours', count: 0, chats: [] });
+    }
     const hours = parseInt(req.query.hours) || 6;
     const messageService = require('../services/message.service');
     const dbChats = await messageService.getChats();
@@ -238,6 +247,10 @@ async function getRecentChats(req, res) {
 
 async function getChatMessages(req, res) {
   try {
+    const auth = require('../whatsapp/whatsapp.auth');
+    if (!auth.sessionExists()) {
+      return res.status(200).json({ success: true, timeframe: 'Last 6 hours', count: 0, messages: [] });
+    }
     const jid = req.params.jid;
     if (!jid) return res.status(400).json({ success: false, error: 'JID is required' });
 

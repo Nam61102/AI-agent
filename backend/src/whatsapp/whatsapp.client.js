@@ -21,6 +21,7 @@ class WhatsAppClient {
     this.latestPairingCode = null;
     this.isConnecting = false;
     this.autoReconnect = true;
+    this.reconnectTimer = null;
     this.logger = pino({ level: 'silent' });
 
     // Real-time WhatsApp data stores
@@ -319,6 +320,10 @@ class WhatsAppClient {
           }
         } else if (connection === 'open') {
           this.isConnecting = false;
+          if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+          }
           this.latestQr = null;
           this.latestPairingCode = null;
           console.log('✓ [WhatsAppClient] PAIRING SUCCESSFUL & CONNECTED!');
@@ -374,9 +379,7 @@ class WhatsAppClient {
           } else {
             console.log(`[WhatsAppClient] Connection closed (code: ${statusCode}). Reconnecting in 2 seconds...`);
             this.updateStatus('AUTHENTICATING');
-            setTimeout(() => {
-                this.connect();
-            }, 2000);
+            this.scheduleReconnect(2000);
           }
         }
       });
@@ -579,7 +582,39 @@ class WhatsAppClient {
     }
     return contacts;
   }
+
+  handleUnhandledError(error) {
+    const message = error?.message || String(error || '');
+    const stack = error?.stack || '';
+    const isBaileysTimeout = message.includes('Timed Out') &&
+      (stack.includes('@whiskeysockets/baileys') || stack.includes('waitForMessage'));
+
+    if (!isBaileysTimeout || !this.autoReconnect) return false;
+
+    console.warn('[WhatsAppClient] Baileys timed out during startup; reconnecting safely.');
+    this.isConnecting = false;
+    this.updateStatus('AUTHENTICATING');
+    this.scheduleReconnect(3000);
+    return true;
+  }
+
+  scheduleReconnect(delayMs = 2000) {
+    if (!this.autoReconnect || this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect().catch(error => {
+        console.error('[WhatsAppClient] Reconnect failed:', error.message);
+        this.scheduleReconnect(5000);
+      });
+    }, delayMs);
+  }
+
   async disconnect() {
+    this.autoReconnect = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     console.log('[WhatsAppClient] Disconnecting and clearing session...');
     
     // 1. Terminate socket if it exists

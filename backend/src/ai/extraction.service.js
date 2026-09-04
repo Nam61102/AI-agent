@@ -108,7 +108,10 @@ class ExtractionService {
 
     if (!type || !payload) return null;
 
-    const status = confidence >= 0.60 ? 'active' : 'needs_review';
+    // Aggressive filtering: Discard any extraction with low confidence completely
+    if (confidence < 0.90) return null;
+
+    const status = confidence >= 0.95 ? 'active' : 'needs_review';
 
     return {
       type,
