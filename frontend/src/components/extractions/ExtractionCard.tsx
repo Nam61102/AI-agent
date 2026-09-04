@@ -1,11 +1,13 @@
-import React from 'react';
-import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import { Extraction } from '../../services/extraction.service';
 import { PayloadRenderer } from './PayloadRenderer';
 import { Card } from '../ui/Card';
 import { Typography } from '../ui/Typography';
 import { Badge } from '../ui/Badge';
 import { theme } from '../../theme';
+import { whatsappService } from '../../services/whatsapp.service';
+import { aiService } from '../../services/ai.service';
 
 interface ExtractionCardProps {
   extraction: Extraction;
@@ -70,6 +72,37 @@ export const ExtractionCard: React.FC<ExtractionCardProps> = ({
 }) => {
   const isNeedsReview = extraction.status === 'needs_review';
   const typeColors = getTypeColor(extraction.type);
+  const [reply, setReply] = useState(extraction.suggested_reply || '');
+  const [replyVisible, setReplyVisible] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [replyLoading, setReplyLoading] = useState(!extraction.suggested_reply);
+  const giftSuggestions = Array.isArray(extraction.payload?.gift_suggestions)
+    ? extraction.payload.gift_suggestions
+    : extraction.type === 'life_event' && /birthday/i.test(`${extraction.payload?.event || ''} ${extraction.payload?.title || ''}`)
+      ? [{ item: 'A personalized gift based on their interests', confidence: null }, { item: 'A thoughtful meal or shared experience', confidence: null }]
+      : [];
+
+  React.useEffect(() => {
+    if (extraction.suggested_reply || !extraction.source_text || !extraction.chat_jid) return;
+    aiService.suggestReply(extraction.chat_jid, extraction.source_text)
+      .then(suggestedReply => {
+        if (suggestedReply) setReply(suggestedReply);
+      })
+      .finally(() => setReplyLoading(false));
+  }, [extraction.chat_jid, extraction.source_text, extraction.suggested_reply]);
+
+  const sendReply = async () => {
+    if (!reply.trim() || !extraction.chat_jid) return;
+    setSending(true);
+    try {
+      if (await whatsappService.sendMessage(extraction.chat_jid, reply.trim())) {
+        setReplyVisible(false);
+        onConfirm?.(extraction);
+      }
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <Card variant="elevated" style={[styles.cardSpacing, { borderLeftWidth: 4, borderLeftColor: typeColors.text }]}>
@@ -96,15 +129,38 @@ export const ExtractionCard: React.FC<ExtractionCardProps> = ({
       {/* Discovered Knowledge / Payload */}
       <PayloadRenderer payload={extraction.payload} />
 
-      {/* Source WhatsApp Message */}
-      {extraction.source_text ? (
-        <View style={styles.sourceMessageBox}>
-          <Typography variant="caption" color={theme.colors.textSecondary} style={styles.sourceMessageLabel}>
-            SOURCE WHATSAPP MESSAGE
+      {replyVisible ? (
+        <View style={styles.replyBox}>
+          <Typography variant="caption" color="#2563EB" style={styles.sourceMessageLabel}>
+            AI SUGGESTED REPLY
           </Typography>
-          <Typography variant="body" color={theme.colors.textPrimary} style={styles.sourceMessageText}>
-            "{extraction.source_text}"
-          </Typography>
+          {replyLoading ? <ActivityIndicator size="small" color="#2563EB" /> : <TextInput
+            value={reply}
+            onChangeText={setReply}
+            multiline
+            style={styles.replyInput}
+            placeholder="Write a reply..."
+          />}
+          <View style={styles.replyActions}>
+            <TouchableOpacity style={styles.sendBtn} onPress={sendReply} disabled={sending || replyLoading || !reply.trim()}>
+              {sending ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Typography variant="caption" color="#FFFFFF" style={{ fontWeight: '700' }}>Send</Typography>}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setReplyVisible(false)} disabled={sending}>
+              <Typography variant="caption" color="#64748B" style={{ fontWeight: '700' }}>Cancel</Typography>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {extraction.type === 'life_event' && giftSuggestions.length > 0 ? (
+        <View style={styles.giftBox}>
+          <Typography variant="caption" color="#92400E" style={styles.sourceMessageLabel}>🎁 BIRTHDAY GIFT SUGGESTIONS</Typography>
+          {giftSuggestions.map((gift: any, index: number) => (
+            <View key={`${gift.item}-${index}`} style={styles.giftRow}>
+              <Typography variant="body" color={theme.colors.textPrimary}>{gift.item}</Typography>
+              {gift.confidence !== undefined ? <Typography variant="caption" color="#92400E">{gift.confidence}%</Typography> : null}
+            </View>
+          ))}
         </View>
       ) : null}
 
@@ -196,14 +252,15 @@ const styles = StyleSheet.create({
   confidenceSpacing: {
     fontWeight: '600'
   },
-  sourceMessageBox: {
-    backgroundColor: '#F8FAFC',
+  replyBox: {
+    backgroundColor: '#EFF6FF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 8,
     padding: 10,
     marginTop: 6,
-    marginBottom: 8
+    marginBottom: 8,
+    marginTop: 6
   },
   sourceMessageLabel: {
     fontSize: 10,
@@ -218,6 +275,21 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontStyle: 'italic'
   },
+  replyInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 6,
+    minHeight: 54,
+    padding: 9,
+    fontSize: 14,
+    color: '#0F172A'
+  },
+  replyActions: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  sendBtn: { backgroundColor: '#2563EB', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 6, minWidth: 58, alignItems: 'center' },
+  cancelBtn: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6 },
+  giftBox: { backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 8, padding: 10, marginTop: 6, marginBottom: 8 },
+  giftRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 3 },
   actions: {
     flexDirection: 'row',
     justifyContent: 'space-between',

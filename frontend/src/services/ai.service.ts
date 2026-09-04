@@ -105,6 +105,21 @@ class AIService {
       return [];
     }
   }
+
+  async suggestReply(jid: string, text: string): Promise<string | null> {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/ai/suggest-reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jid, text })
+      });
+      const data = await response.json();
+      return data.success ? data.data?.suggested_reply || data.data?.reply || null : null;
+    } catch (error) {
+      console.error('[AIService] Error generating suggested reply:', error);
+      return null;
+    }
+  }
 }
 
 export const aiService = new AIService();

@@ -27,6 +27,9 @@ export interface Extraction {
   chat_name?: string;
   sender_name?: string;
   extracted_at: string;
+  suggested_reply?: string;
+  reply_reason?: string;
+  reply_tone?: string;
 }
 
 export interface ExtractionFilters {

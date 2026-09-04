@@ -23,6 +23,7 @@ interface HomeScreenProps {
   onConnect: () => void;
   onOpenChat: (jid?: string, messageText?: string) => void;
   onActions: () => void;
+  onNavigatePeople: () => void;
 }
 
 interface UnifiedAction {
@@ -41,6 +42,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onConnect,
   onOpenChat,
   onActions,
+  onNavigatePeople,
 }) => {
   const { isConnected } = useWhatsApp();
   const { extractions, refetch } = useExtractions();
@@ -271,7 +273,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </View>
         </View>
 
-        <View style={styles.headerRightActions}>
+                <View style={styles.headerRightActions}>
+          <TouchableOpacity
+            style={styles.notifBtn}
+            onPress={onNavigatePeople}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.notifIcon}>👥</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.connectionStatusPill, isConnected ? styles.pillOnline : styles.pillOffline]}
             onPress={onConnect}
