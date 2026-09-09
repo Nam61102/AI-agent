@@ -1,4 +1,7 @@
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string;
+import { getAuthHeaders } from './session.service';
+
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string || 'http://localhost:3000';
+
 export interface ExtractionPayload {
   description?: string;
   due_date?: string;
@@ -46,7 +49,7 @@ class ExtractionService {
       if (filters?.status) url += `status=${filters.status}&`;
       if (filters?.contact_id) url += `contact_id=${filters.contact_id}&`;
 
-      const response = await fetch(url);
+      const response = await fetch(url, { headers: getAuthHeaders() });
       const data = await response.json();
       if (data.success && Array.isArray(data.data)) {
         return data.data;
@@ -60,7 +63,9 @@ class ExtractionService {
 
   async getExtractionById(id: number): Promise<Extraction | null> {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/extractions/${id}`);
+      const response = await fetch(`${BACKEND_URL}/api/extractions/${id}`, {
+        headers: getAuthHeaders()
+      });
       const data = await response.json();
       if (data.success && data.data) {
         return data.data;
@@ -72,10 +77,11 @@ class ExtractionService {
     }
   }
 
-  // Attempt to fetch source message
   async getSourceMessage(messageId: number): Promise<{ text: string } | null> {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/extractions/source-message/${messageId}`);
+      const response = await fetch(`${BACKEND_URL}/api/extractions/source-message/${messageId}`, {
+        headers: getAuthHeaders()
+      });
       if (!response.ok) return null;
       const data = await response.json();
       if (data.success && data.data) {
@@ -83,25 +89,22 @@ class ExtractionService {
       }
       return null;
     } catch (error) {
-      // Ignore errors for now as endpoint may be missing
       return null;
     }
   }
 
-  // Confirm/Reject placeholders (UI buttons connect to these)
   async confirmExtraction(id: number): Promise<boolean> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/extractions/${id}/confirm`, {
-        method: 'POST'
+        method: 'POST',
+        headers: getAuthHeaders()
       });
       if (!response.ok) {
-        console.warn('Backend endpoint for confirming extraction may not be implemented yet.');
         return false;
       }
       const data = await response.json();
-      return data.success;
+      return Boolean(data.success);
     } catch (error) {
-      console.warn('Backend endpoint for confirming extraction may not be implemented yet.');
       return false;
     }
   }
@@ -109,16 +112,15 @@ class ExtractionService {
   async rejectExtraction(id: number): Promise<boolean> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/extractions/${id}/reject`, {
-        method: 'POST'
+        method: 'POST',
+        headers: getAuthHeaders()
       });
       if (!response.ok) {
-        console.warn('Backend endpoint for rejecting extraction may not be implemented yet.');
         return false;
       }
       const data = await response.json();
-      return data.success;
+      return Boolean(data.success);
     } catch (error) {
-      console.warn('Backend endpoint for rejecting extraction may not be implemented yet.');
       return false;
     }
   }

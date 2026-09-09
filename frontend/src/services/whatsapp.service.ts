@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { getSessionId, getAuthHeaders, resetSessionId } from './session.service';
 
 export type ConnectionStatus =
   | 'NOT_CONNECTED'
@@ -20,7 +21,8 @@ export interface WhatsAppServiceListener {
   onChatMessages?: (data: { jid: string; messages: any[] }) => void;
 }
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string;
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string || 'http://localhost:3000';
+
 class WhatsAppService {
   private socket: Socket | null = null;
   private listeners: Set<WhatsAppServiceListener> = new Set();
@@ -34,27 +36,41 @@ class WhatsAppService {
     this.initSocket();
   }
 
+  public getSessionId(): string {
+    return getSessionId();
+  }
+
+  public getStatus(): ConnectionStatus {
+    return this.currentStatus;
+  }
+
+  public getQR(): string | null {
+    return this.currentQR;
+  }
+
   private initSocket() {
     if (this.socket) return;
 
     try {
+      const sessionId = getSessionId();
       this.socket = io(BACKEND_URL, {
         transports: ['polling', 'websocket'],
         autoConnect: true,
         reconnection: true,
-        reconnectionAttempts: 5,
-        reconnectionDelay: 3000,
-        timeout: 5000
+        reconnectionAttempts: 10,
+        reconnectionDelay: 2000,
+        timeout: 5000,
+        query: { sessionId }
       });
 
       this.socket.on('connect', () => {
-        console.log('[WhatsAppService] Socket connected to backend');
-        this.socket?.emit('whatsapp:request_status');
+        console.log(`[WhatsAppService] Socket connected to backend with session: ${sessionId}`);
+        this.socket?.emit('whatsapp:request_status', { sessionId: getSessionId() });
       });
 
       this.socket.on('connect_error', () => {
         if (!this.isMockMode && this.currentStatus === 'NOT_CONNECTED') {
-          console.warn('[WhatsAppService] Backend server at 127.0.0.1:3000 is currently offline.');
+          console.warn('[WhatsAppService] Backend server is currently offline or reconnecting.');
         }
       });
 
@@ -148,11 +164,11 @@ class WhatsAppService {
   public async requestChatMessages(jid: string) {
     if (this.isMockMode) return;
     try {
-      const response = await fetch(`${BACKEND_URL}/api/whatsapp/chat-messages/${encodeURIComponent(jid)}?hours=6`);
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/chat-messages/${encodeURIComponent(jid)}?hours=6`, {
+        headers: getAuthHeaders()
+      });
       const data = await response.json();
       if (data.success && data.messages) {
-        // We still use the socket listener architecture by simulating the socket event 
-        // to keep the frontend state management clean
         this.listeners.forEach((l) => l.onChatMessages?.({ jid, messages: data.messages }));
       }
     } catch (error) {
@@ -177,6 +193,31 @@ class WhatsAppService {
     this.listeners.forEach((l) => l.onError?.(message));
   }
 
+  public async checkStatus(): Promise<{ success: boolean; status: ConnectionStatus }> {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/status`, {
+        headers: getAuthHeaders()
+      });
+      const data = await response.json();
+      if (data.success && data.status) {
+        this.updateStatus(data.status);
+        if (data.status === 'QR_READY') {
+          // Fetch QR
+          const qrRes = await fetch(`${BACKEND_URL}/api/whatsapp/qr`, { headers: getAuthHeaders() });
+          const qrData = await qrRes.json();
+          if (qrData.success && qrData.qr) {
+            this.currentQR = qrData.qr;
+            this.notifyQR(qrData.qr);
+          }
+        }
+        return { success: true, status: data.status };
+      }
+    } catch (err) {
+      console.warn('[WhatsAppService] checkStatus error:', err);
+    }
+    return { success: false, status: this.currentStatus };
+  }
+
   public async connect(): Promise<{ success: boolean; status: ConnectionStatus; requiresScan?: boolean }> {
     if (this.isMockMode) {
       return this.runMockConnectionFlow();
@@ -185,11 +226,22 @@ class WhatsAppService {
     try {
       const response = await fetch(`${BACKEND_URL}/api/whatsapp/connect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        }
       });
       const data = await response.json();
       if (data.success && data.status) {
         this.updateStatus(data.status);
+        if (data.status === 'QR_READY') {
+          const qrRes = await fetch(`${BACKEND_URL}/api/whatsapp/qr`, { headers: getAuthHeaders() });
+          const qrData = await qrRes.json();
+          if (qrData.success && qrData.qr) {
+            this.currentQR = qrData.qr;
+            this.notifyQR(qrData.qr);
+          }
+        }
         return { success: true, status: data.status, requiresScan: data.requiresScan === true };
       }
     } catch (err: any) {
@@ -211,7 +263,10 @@ class WhatsAppService {
     try {
       const response = await fetch(`${BACKEND_URL}/api/whatsapp/pairing-code`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
         body: JSON.stringify({ phoneNumber })
       });
       const data = await response.json();
@@ -231,7 +286,9 @@ class WhatsAppService {
     if (this.isMockMode) return [];
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/whatsapp/recent-chats?hours=${hours}`);
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/recent-chats?hours=${hours}`, {
+        headers: getAuthHeaders()
+      });
       const data = await response.json();
       if (data.success && data.chats) {
         return data.chats;
@@ -247,7 +304,9 @@ class WhatsAppService {
     if (this.isMockMode) return [];
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/whatsapp/current-contacts`);
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/current-contacts`, {
+        headers: getAuthHeaders()
+      });
       const data = await response.json();
       if (data.success && Array.isArray(data.contacts)) {
         return data.contacts;
@@ -262,9 +321,8 @@ class WhatsAppService {
   public async sendMessage(jid: string, text: string): Promise<boolean> {
     if (this.isMockMode) return true;
     
-    // Use the real-time socket instead of the REST endpoint
     if (this.socket) {
-      this.socket.emit('whatsapp:send_message', { jid, text });
+      this.socket.emit('whatsapp:send_message', { jid, text, sessionId: getSessionId() });
       return true;
     }
     return false;
@@ -282,7 +340,10 @@ class WhatsAppService {
     try {
       const response = await fetch(`${BACKEND_URL}/api/whatsapp/disconnect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        }
       });
       const data = await response.json();
       if (data.success) {

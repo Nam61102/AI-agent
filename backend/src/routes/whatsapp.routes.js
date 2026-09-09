@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/whatsapp.controller');
+const sessionMiddleware = require('../middleware/session.middleware');
+
+router.use(sessionMiddleware);
 
 router.post('/connect', controller.connect);
 router.post('/pairing-code', controller.requestPairingCode);

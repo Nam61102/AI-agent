@@ -1,10 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/supabase');
+const { sessionMiddleware } = require('../middleware/session.middleware');
+
+router.use(sessionMiddleware);
 
 router.get('/', async (req, res) => {
   try {
-    const { rows: contacts } = await pool.query('SELECT jid, name, profile_data FROM contacts WHERE profile_data IS NOT NULL');
+    const accountJid = req.accountJid;
+    const { rows: contacts } = await pool.query(
+      'SELECT jid, name, profile_data FROM contacts WHERE profile_data IS NOT NULL AND (account_jid = $1 OR account_jid = \'default_user\')',
+      [accountJid]
+    );
     
     let upcomingAlerts = [];
     

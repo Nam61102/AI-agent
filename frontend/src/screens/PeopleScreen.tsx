@@ -1,308 +1,891 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  ActivityIndicator,
+  SafeAreaView,
+  StatusBar,
+  TextInput,
+  Platform,
+  useWindowDimensions
+} from 'react-native';
 import { theme } from '../theme';
 import { contactService } from '../services/contact.service';
+import { useWhatsApp } from '../hooks/useWhatsApp';
+
+interface PeopleScreenProps {
+  onBackPress?: () => void;
+  onNavigateHome?: () => void;
+  onNavigatePeople?: () => void;
+  onNavigateExtractions?: () => void;
+  onNavigateConnection?: () => void;
+  onOpenChat?: (jid?: string, messageText?: string) => void;
+}
 
 const profileItems = (contact: any, category: string) => {
   const value = contact.profile_data?.[category] ?? contact[category];
   if (Array.isArray(value)) return value.filter(item => item?.item);
-  return value ? [{ item: String(value), confidence: null }] : [];
+  if (typeof value === 'string' && value.trim()) {
+    return value.split(',').map(s => ({ item: s.trim(), confidence: null })).filter(i => i.item);
+  }
+  return [];
 };
 
-const ProfileSection = ({ icon, title, items }: { icon: string; title: string; items: any[] }) => {
+const ProfileSection = ({ icon, title, items, emptyText }: { icon: string; title: string; items: any[]; emptyText: string }) => {
   return (
     <View style={styles.profileSection}>
-      <Text style={styles.profileTitle}>{icon} {title}</Text>
-      {items.length ? items.map((item, index) => (
-          <View key={`${item.item}-${index}`} style={styles.profileRow}>
-            <Text style={styles.profileText}>{item.item}</Text>
-            {item.confidence !== null && <Text style={styles.confidence}>{item.confidence}%</Text>}
-          </View>
-        )) : (
-          <Text style={styles.emptyProfileText}>Nothing found yet.</Text>
-        )}
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionIcon}>{icon}</Text>
+        <Text style={styles.profileSectionTitle}>{title}</Text>
+      </View>
+      {items.length > 0 ? (
+        <View style={styles.tagsContainer}>
+          {items.map((item, index) => (
+            <View key={`${item.item}-${index}`} style={styles.tagPill}>
+              <Text style={styles.tagText}>{item.item}</Text>
+              {item.confidence !== null && item.confidence !== undefined && (
+                <Text style={styles.tagConfidence}>{item.confidence}%</Text>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.emptyProfileText}>{emptyText}</Text>
+      )}
     </View>
   );
 };
 
-export const PeopleScreen = ({ onBackPress, onNavigateHome, onNavigatePeople, onNavigateExtractions, onNavigateConnection }: any) => {
+export const PeopleScreen: React.FC<PeopleScreenProps> = ({
+  onBackPress,
+  onNavigateHome,
+  onNavigatePeople,
+  onNavigateExtractions,
+  onNavigateConnection,
+  onOpenChat
+}) => {
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
+  const { isConnected } = useWhatsApp();
+
   const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [relationshipData, setRelationshipData] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
-  const [profileLoadingIds, setProfileLoadingIds] = useState<string[]>([]);
 
   useEffect(() => {
-    loadAllContacts();
-  }, []);
+    loadSavedContacts();
+  }, [isConnected]);
 
-  const loadAllContacts = async () => {
+  const loadSavedContacts = async () => {
+    setLoading(true);
     try {
       const data = await contactService.getAllContacts();
-      const people = data
-        .filter((contact: any) => {
-          const jid = String(contact.jid || '').toLowerCase();
-          return !jid.endsWith('@g.us')
-            && !jid.endsWith('@newsletter')
-            ;
-        });
-      setContacts(people);
-      setLoading(false);
-
       
+      // Filter strictly for saved contacts with actual human names (not phone numbers or group JIDs)
+      const savedPeople = (data || []).filter((contact: any) => {
+        const jid = String(contact.jid || '').toLowerCase();
+        const name = String(contact.name || '').trim();
+        
+        const isGroup = jid.endsWith('@g.us') || jid.endsWith('@newsletter') || jid.endsWith('@lid');
+        const isPhoneOnly = /^[0-9+ ()\-\.\_]+$/.test(name);
+        const isJidName = name.includes('@');
+        const isGeneric = name.toLowerCase() === 'group' || name.toLowerCase() === 'unknown';
+
+        return !isGroup && name.length > 0 && !isPhoneOnly && !isJidName && !isGeneric;
+      });
+
+      setContacts(savedPeople);
     } catch (e) {
-      console.error(e);
+      console.error('Failed to load contacts:', e);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleProfileClick = async (contact: any) => {
+  // Filter contacts by search query matching contact names only
+  const filteredContacts = useMemo(() => {
+    if (!searchQuery.trim()) return contacts;
+    const query = searchQuery.toLowerCase().trim();
+    return contacts.filter((c: any) => {
+      const name = String(c.name || '').toLowerCase();
+      return name.includes(query);
+    });
+  }, [contacts, searchQuery]);
+
+  const handleSelectContact = async (contact: any) => {
     setSelectedContact(contact);
     setRelationshipData(null);
-    
-    // Fetch Relationship Data in background
+
+    // Fetch Relationship score breakdown
     contactService.getRelationshipData(contact.jid).then(data => {
       if (data && data.success) {
         setRelationshipData(data);
       }
     }).catch(e => console.error('Failed to load relationship data', e));
 
-    if (!contact.likes && !contact.dislikes) {
+    // Auto-analyze profile if not already analyzed
+    if (!contact.likes && !contact.dislikes && !contact.profile_data) {
       setAnalyzing(true);
       try {
         const profile = await contactService.analyzeProfile(contact.jid);
         if (profile) {
-          const updated = { ...contact, likes: profile.likes, dislikes: profile.dislikes };
+          const updated = {
+            ...contact,
+            likes: profile.likes,
+            dislikes: profile.dislikes,
+            interests: profile.interests,
+            profile_data: profile
+          };
           setSelectedContact(updated);
-          setContacts(contacts.map(c => c.id === contact.id ? updated : c));
+          setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
         }
       } catch (e) {
-        console.error(e);
+        console.error('Error analyzing profile:', e);
       } finally {
         setAnalyzing(false);
       }
     }
   };
 
+  const handleManualReanalyze = async () => {
+    if (!selectedContact?.jid) return;
+    setAnalyzing(true);
+    try {
+      const profile = await contactService.analyzeProfile(selectedContact.jid);
+      if (profile) {
+        const updated = {
+          ...selectedContact,
+          likes: profile.likes,
+          dislikes: profile.dislikes,
+          interests: profile.interests,
+          profile_data: profile
+        };
+        setSelectedContact(updated);
+        setContacts(prev => prev.map(c => c.id === selectedContact.id ? updated : c));
+      }
+    } catch (e) {
+      console.error('Error analyzing profile:', e);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  // Detail View of a specific contact
   if (selectedContact) {
-    const formatFactorName = (name: string) => {
-      return name.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-    };
+    const contactName = selectedContact.name || 'Saved Contact';
+    const initial = contactName.charAt(0).toUpperCase();
+    const likes = profileItems(selectedContact, 'likes');
+    const dislikes = profileItems(selectedContact, 'dislikes');
+    const interests = profileItems(selectedContact, 'interests');
+    const score = relationshipData?.compositeScore || selectedContact.relationship_score || 0;
 
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
+        
+        {/* HEADER */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => setSelectedContact(null)}>
-            <Text style={styles.backTxt}>‹ Back</Text>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => setSelectedContact(null)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Text style={styles.backButtonText}>‹ People</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>{selectedContact.name || selectedContact.jid}</Text>
-          <View style={{ width: 60 }} />
-        </View>
-        <View style={styles.profileCard}>
-          <Text style={styles.name}>{selectedContact.name || selectedContact.jid}</Text>
-          
-          <View style={styles.relationshipScoreContainer}>
-            <Text style={styles.relationshipHeader}>Relationship Intelligence</Text>
-            <View style={styles.scoreRow}>
-                <Text style={styles.mainScore}>{relationshipData ? relationshipData.compositeScore : selectedContact.relationship_score}<Text style={{fontSize: 20}}>/100</Text></Text>
-                {((relationshipData?.compositeScore || selectedContact.relationship_score) >= 70) && <Text style={styles.strongBadge}>❤️ Strong Relationship</Text>}
-            </View>
-            
-            {relationshipData && relationshipData.factors ? (
-              <View style={styles.factorsContainer}>
-                 {Object.entries(relationshipData.factors).map(([key, value]) => (
-                    <View key={key} style={styles.factorRow}>
-                       <Text style={styles.factorName}>{formatFactorName(key)}</Text>
-                       <View style={styles.factorBarBg}>
-                          <View style={[styles.factorBarFg, { width: `${value}%` }]} />
-                       </View>
-                       <Text style={styles.factorScore}>{Number(value)}</Text>
-                    </View>
-                 ))}
-              </View>
+          <Text style={styles.headerTitle} numberOfLines={1}>{contactName}</Text>
+          <TouchableOpacity
+            style={styles.reanalyzeHeaderBtn}
+            onPress={handleManualReanalyze}
+            disabled={analyzing}
+            activeOpacity={0.7}
+          >
+            {analyzing ? (
+              <ActivityIndicator size="small" color="#4F46E5" />
             ) : (
-              <ActivityIndicator size="small" color={theme.colors.primary} style={{marginTop: 10, alignSelf: 'flex-start'}} />
+              <Text style={styles.reanalyzeHeaderBtnText}>✨ Analyze</Text>
             )}
-          </View>
-          
-          {analyzing ? (
-            <View style={styles.analyzeBox}>
-              <ActivityIndicator size='large' color={theme.colors.primary} />
-              <Text style={styles.analyzeTxt}>AI is analyzing past chats to find likes & dislikes...</Text>
-            </View>
-          ) : (
-            <View style={styles.detailsBox}>
-              <View style={styles.section}>
-                <ProfileSection icon='👍' title='Likes' items={profileItems(selectedContact, 'likes')} />
+          </TouchableOpacity>
+        </View>
+
+        <FlatList
+          data={[1]}
+          keyExtractor={() => 'detail'}
+          contentContainerStyle={[styles.detailContent, isDesktop && styles.desktopContainer]}
+          renderItem={() => (
+            <View>
+              {/* CONTACT HERO CARD */}
+              <View style={styles.heroCard}>
+                <View style={styles.heroAvatar}>
+                  <Text style={styles.heroAvatarText}>{initial}</Text>
+                </View>
+                <Text style={styles.heroNameText}>{contactName}</Text>
+                <Text style={styles.heroSubText}>Saved WhatsApp Contact</Text>
+
+                {onOpenChat && (
+                  <TouchableOpacity
+                    style={styles.openChatBtn}
+                    onPress={() => onOpenChat(selectedContact.jid)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.openChatBtnText}>💬 Open Chat</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-              <View style={styles.section}>
-                <ProfileSection icon='👎' title='Dislikes' items={profileItems(selectedContact, 'dislikes')} />
+
+              {/* RELATIONSHIP INTELLIGENCE CARD */}
+              <View style={styles.intelCard}>
+                <View style={styles.intelHeaderRow}>
+                  <Text style={styles.intelTitle}>Relationship Intelligence</Text>
+                  <View style={styles.scorePill}>
+                    <Text style={styles.scorePillText}>{score}/100</Text>
+                  </View>
+                </View>
+
+                {score >= 70 && (
+                  <View style={styles.strongBadge}>
+                    <Text style={styles.strongBadgeText}>❤️ Strong Connection</Text>
+                  </View>
+                )}
+
+                {relationshipData?.factors ? (
+                  <View style={styles.factorsContainer}>
+                    {Object.entries(relationshipData.factors).map(([key, val]: [string, any]) => {
+                      const label = key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                      const numVal = Math.min(100, Math.max(0, Number(val) || 0));
+                      return (
+                        <View key={key} style={styles.factorRow}>
+                          <Text style={styles.factorName}>{label}</Text>
+                          <View style={styles.factorBarBg}>
+                            <View style={[styles.factorBarFg, { width: `${numVal}%` }]} />
+                          </View>
+                          <Text style={styles.factorScore}>{numVal}%</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Text style={styles.intelSubText}>
+                    Calculated from conversation depth, frequency, and sentiment.
+                  </Text>
+                )}
               </View>
-              <View style={styles.section}>
-                <ProfileSection icon='⭐' title='Interests' items={profileItems(selectedContact, 'interests')} />
+
+              {/* AI DISCOVERED SIGNALS */}
+              <View style={styles.signalsCard}>
+                <Text style={styles.signalsCardTitle}>AI Discovered Knowledge</Text>
+
+                {analyzing ? (
+                  <View style={styles.analyzingBox}>
+                    <ActivityIndicator size="small" color="#4F46E5" />
+                    <Text style={styles.analyzingText}>AI is reading past messages to identify likes, preferences, and interests...</Text>
+                  </View>
+                ) : (
+                  <>
+                    <ProfileSection
+                      icon="👍"
+                      title="Likes & Preferences"
+                      items={likes}
+                      emptyText="No specific likes mentioned yet in conversations."
+                    />
+
+                    <ProfileSection
+                      icon="👎"
+                      title="Dislikes & Sensitivities"
+                      items={dislikes}
+                      emptyText="No dislikes recorded."
+                    />
+
+                    <ProfileSection
+                      icon="⭐"
+                      title="Interests & Topics"
+                      items={interests}
+                      emptyText="No particular interests detected yet."
+                    />
+                  </>
+                )}
               </View>
             </View>
           )}
-        </View>
+        />
+
+        {/* BOTTOM NAVIGATION BAR */}
         <View style={styles.bottomNavBar}>
           <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigateHome || onBackPress} activeOpacity={0.8}>
             <Text style={styles.bottomNavIcon}>⚡</Text>
             <Text style={styles.bottomNavLabel}>Dashboard</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigatePeople} activeOpacity={0.8}>
+
+          <TouchableOpacity style={styles.bottomNavItem} onPress={() => setSelectedContact(null)} activeOpacity={0.8}>
             <Text style={[styles.bottomNavIcon, styles.bottomNavIconActive]}>👥</Text>
             <Text style={[styles.bottomNavLabel, styles.bottomNavLabelActive]}>People</Text>
           </TouchableOpacity>
+
           <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigateExtractions} activeOpacity={0.8}>
             <Text style={styles.bottomNavIcon}>📌</Text>
             <Text style={styles.bottomNavLabel}>Extractions</Text>
           </TouchableOpacity>
+
           <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigateConnection} activeOpacity={0.8}>
-            <Text style={styles.bottomNavIcon}>📱</Text>
+            <Text style={styles.bottomNavIcon}>⚙️</Text>
             <Text style={styles.bottomNavLabel}>Connection</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
+  // Main Contacts List View
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
+
+      {/* HEADER */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={onBackPress}><Text style={styles.backTxt}>‹ Dashboard</Text></TouchableOpacity>
-        <Text style={styles.headerTitle}>All Contacts</Text>
-        <View style={{ width: 60 }} />
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBackPress || onNavigateHome}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Text style={styles.backButtonText}>‹ Dashboard</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>People</Text>
+        <View style={styles.countPill}>
+          <Text style={styles.countPillText}>{filteredContacts.length} saved</Text>
+        </View>
       </View>
-      {loading ? (
-        <ActivityIndicator size='large' color={theme.colors.primary} style={{ marginTop: 50 }} />
-      ) : (
-        <FlatList
-          data={contacts}
-          keyExtractor={(item) => item.id.toString()}
-          contentContainerStyle={styles.list}
-          renderItem={({ item }) => {
-            const hasProfile = item.likes && typeof item.likes === 'string' && item.likes.length > 0;
-            const isAnalyzing = profileLoadingIds.includes(item.jid);
-            const initials = (item.name || item.jid).charAt(0).toUpperCase();
 
-            return (
-              <TouchableOpacity style={styles.contactCard} onPress={() => handleProfileClick(item)}>
-                <View style={styles.contactCardHeader}>
+      <View style={[styles.contentContainer, isDesktop && styles.desktopContainer]}>
+        {/* SEARCH BAR BY NAME ONLY */}
+        <View style={styles.searchContainer}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search saved contacts by name..."
+            placeholderTextColor="#94A3B8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            clearButtonMode="while-editing"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearBtn}>
+              <Text style={styles.clearBtnText}>✕</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* CONTACTS LIST */}
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#4F46E5" />
+            <Text style={styles.loadingText}>Fetching saved contacts...</Text>
+          </View>
+        ) : filteredContacts.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyIcon}>👥</Text>
+            <Text style={styles.emptyTitle}>No saved contacts found</Text>
+            <Text style={styles.emptySub}>
+              {searchQuery
+                ? `No contact matching "${searchQuery}" was found.`
+                : 'Connect your WhatsApp account to load your saved contacts.'}
+            </Text>
+          </View>
+        ) : (
+          <FlatList
+            data={filteredContacts}
+            keyExtractor={(item) => String(item.id || item.jid)}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) => {
+              const contactName = item.name || 'Saved Contact';
+              const initial = contactName.charAt(0).toUpperCase();
+              const score = item.relationship_score || 0;
+              const hasKnowledge = Boolean(item.likes || item.dislikes || item.profile_data);
+
+              return (
+                <TouchableOpacity
+                  style={styles.contactCard}
+                  onPress={() => handleSelectContact(item)}
+                  activeOpacity={0.7}
+                >
                   <View style={styles.avatarCircle}>
-                    <Text style={styles.avatarText}>{initials}</Text>
+                    <Text style={styles.avatarText}>{initial}</Text>
                   </View>
-                  <View style={styles.contactCardInfo}>
-                    <Text style={styles.contactCardName} numberOfLines={1}>{item.name || item.jid}</Text>
 
-                    {/* Compact Strength Bar */}
-                    <View style={styles.compactStrengthRow}>
-                      <View style={styles.compactStrengthBarBg}>
-                        <View style={[styles.compactStrengthBarFg, { width: `${item.relationship_score}%` }]} />
-                      </View>
-                      <Text style={styles.compactStrengthTxt}>{item.relationship_score}%</Text>
+                  <View style={styles.contactInfo}>
+                    <Text style={styles.contactName} numberOfLines={1}>
+                      {contactName}
+                    </Text>
+                    
+                    <View style={styles.metaRow}>
+                      {score > 0 && (
+                        <View style={styles.scoreBadge}>
+                          <Text style={styles.scoreBadgeText}>⚡ {score}% match</Text>
+                        </View>
+                      )}
+                      {hasKnowledge && (
+                        <View style={styles.knowledgeBadge}>
+                          <Text style={styles.knowledgeBadgeText}>✨ Profile Analyzed</Text>
+                        </View>
+                      )}
                     </View>
                   </View>
 
-                  {/* Status Badge / Button */}
-                  <View style={styles.statusContainer}>
-                    {isAnalyzing ? (
-                      <ActivityIndicator size="small" color={theme.colors.primary} />
-                    ) : hasProfile ? (
-                      <View style={styles.analyzedBadge}>
-                        <Text style={styles.analyzedBadgeText}>✓ Profiled</Text>
-                      </View>
-                    ) : (
-                      <TouchableOpacity
-                        style={styles.analyzeSmallBtn}
-                        onPress={(e) => { e.stopPropagation(); handleProfileClick(item); }}
-                      >
-                        <Text style={styles.analyzeSmallBtnText}>Analyze</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-              </TouchableOpacity>
-            );
-          }}
-        />
-      )}
+                  <Text style={styles.arrowIcon}>›</Text>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        )}
+      </View>
+
+      {/* BOTTOM NAVIGATION BAR */}
       <View style={styles.bottomNavBar}>
         <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigateHome || onBackPress} activeOpacity={0.8}>
           <Text style={styles.bottomNavIcon}>⚡</Text>
           <Text style={styles.bottomNavLabel}>Dashboard</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigatePeople} activeOpacity={0.8}>
+
+        <TouchableOpacity style={styles.bottomNavItem} activeOpacity={0.8}>
           <Text style={[styles.bottomNavIcon, styles.bottomNavIconActive]}>👥</Text>
           <Text style={[styles.bottomNavLabel, styles.bottomNavLabelActive]}>People</Text>
         </TouchableOpacity>
+
         <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigateExtractions} activeOpacity={0.8}>
           <Text style={styles.bottomNavIcon}>📌</Text>
           <Text style={styles.bottomNavLabel}>Extractions</Text>
         </TouchableOpacity>
+
         <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigateConnection} activeOpacity={0.8}>
-          <Text style={styles.bottomNavIcon}>📱</Text>
+          <Text style={styles.bottomNavIcon}>⚙️</Text>
           <Text style={styles.bottomNavLabel}>Connection</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  backBtn: { padding: 16 },
-  backTxt: { color: theme.colors.primary, fontSize: 16, fontWeight: '500' },
-  headerTitle: { fontSize: 20, fontWeight: 'bold' },
-  list: { padding: 16 },
-  contactItem: { backgroundColor: 'white', padding: 16, borderRadius: 12, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  contactName: { fontSize: 18, fontWeight: 'bold', marginBottom: 8 },
-  strengthBarBg: { height: 8, backgroundColor: theme.colors.border, borderRadius: 4, overflow: 'hidden', marginBottom: 4 },
-  strengthBarFg: { height: '100%', backgroundColor: theme.colors.success },
-  strengthTxt: { fontSize: 12, color: '#64748B', textAlign: 'right' },
-  profileSummary: { borderTopWidth: 1, borderTopColor: theme.colors.border, marginTop: 12, paddingTop: 12 },
-  profileSection: { marginBottom: 10 },
-  profileTitle: { fontSize: 14, fontWeight: 'bold', marginTop: 4, marginBottom: 4 },
-  profileRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
-  profileText: { flex: 1, fontSize: 14, color: '#334155', lineHeight: 20, marginBottom: 3 },
-  confidence: { fontSize: 13, color: '#64748B', fontWeight: '600', paddingTop: 2 },
-  profileCard: { backgroundColor: 'white', margin: 16, padding: 24, borderRadius: 16, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 4 },
-  name: { fontSize: 24, fontWeight: 'bold', marginBottom: 4 },
-  strength: { fontSize: 14, color: '#64748B', marginBottom: 24 },
-  analyzeBox: { alignItems: 'center', padding: 40 },
-  analyzeTxt: { marginTop: 16, color: '#64748B', fontSize: 16, textAlign: 'center' },
-  detailsBox: { marginTop: 16 },
-  section: { marginBottom: 24 },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 8 },
-  sectionText: { fontSize: 16, color: '#0F172A', lineHeight: 24 },
-  relationshipScoreContainer: { backgroundColor: '#F8FAFC', padding: 16, borderRadius: 12, marginBottom: 24, borderWidth: 1, borderColor: '#E2E8F0' },
-  relationshipHeader: { fontSize: 14, fontWeight: 'bold', color: '#475569', marginBottom: 8, textTransform: 'uppercase' },
-  scoreRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 },
-  mainScore: { fontSize: 36, fontWeight: 'bold', color: theme.colors.primary },
-  strongBadge: { backgroundColor: '#DCFCE7', color: '#166534', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, fontSize: 14, fontWeight: '600', overflow: 'hidden' },
-  factorsContainer: { gap: 12, borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 16 },
-  factorRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  factorName: { width: 120, fontSize: 12, color: '#475569', fontWeight: '500' },
-  factorBarBg: { flex: 1, height: 8, backgroundColor: '#E2E8F0', borderRadius: 4, overflow: 'hidden' },
-  factorBarFg: { height: '100%', backgroundColor: theme.colors.primary, borderRadius: 4 },
-  factorScore: { width: 32, fontSize: 12, fontWeight: 'bold', color: '#334155', textAlign: 'right' },
-  contactCard: { backgroundColor: 'white', padding: 16, borderRadius: 12, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  contactCardHeader: { flexDirection: 'row', alignItems: 'center' },
-  avatarCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.primary + '20', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  avatarText: { fontSize: 20, fontWeight: 'bold', color: theme.colors.primary },
-  contactCardInfo: { flex: 1, marginRight: 12 },
-  contactCardName: { fontSize: 16, fontWeight: '600', color: '#0F172A', marginBottom: 6 },
-  compactStrengthRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  compactStrengthBarBg: { flex: 1, height: 6, backgroundColor: '#E2E8F0', borderRadius: 3, overflow: 'hidden' },
-  compactStrengthBarFg: { height: '100%', backgroundColor: theme.colors.success, borderRadius: 3 },
-  compactStrengthTxt: { fontSize: 12, fontWeight: '600', color: '#64748B', width: 32 },
-  statusContainer: { minWidth: 80, alignItems: 'flex-end' },
-  analyzedBadge: { backgroundColor: '#F0FDF4', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: '#BBF7D0' },
-  analyzedBadgeText: { fontSize: 12, fontWeight: '600', color: '#166534' },
-  analyzeSmallBtn: { backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
-  analyzeSmallBtnText: { color: 'white', fontSize: 12, fontWeight: '600' },
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#EDF2F7'
+  },
+  desktopContainer: {
+    maxWidth: 820,
+    width: '100%',
+    alignSelf: 'center'
+  },
+  header: {
+    height: 60,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC'
+  },
+  backButton: {
+    paddingVertical: 6,
+    paddingRight: 12
+  },
+  backButtonText: {
+    color: '#4F46E5',
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    flex: 1,
+    textAlign: 'center'
+  },
+  countPill: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#C7D2FE'
+  },
+  countPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#4F46E5'
+  },
+  reanalyzeHeaderBtn: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#C7D2FE'
+  },
+  reanalyzeHeaderBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#4F46E5'
+  },
+  contentContainer: {
+    flex: 1,
+    padding: 16
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 44,
+    marginBottom: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1
+  },
+  searchIcon: {
+    fontSize: 14,
+    marginRight: 8
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F172A',
+    height: '100%'
+  },
+  clearBtn: {
+    padding: 4
+  },
+  clearBtnText: {
+    fontSize: 12,
+    color: '#94A3B8'
+  },
+  listContent: {
+    paddingBottom: 90
+  },
+  contactCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1
+  },
+  avatarCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#4F46E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12
+  },
+  avatarText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800'
+  },
+  contactInfo: {
+    flex: 1
+  },
+  contactName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 3
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  scoreBadge: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4
+  },
+  scoreBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#4F46E5'
+  },
+  knowledgeBadge: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4
+  },
+  knowledgeBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#059669'
+  },
+  arrowIcon: {
+    fontSize: 20,
+    color: '#94A3B8',
+    marginLeft: 8
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#64748B'
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 50,
+    paddingHorizontal: 20
+  },
+  emptyIcon: {
+    fontSize: 36,
+    marginBottom: 8
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  emptySub: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 6,
+    maxWidth: 280
+  },
+  detailContent: {
+    padding: 16,
+    paddingBottom: 90
+  },
+  heroCard: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 14,
+    padding: 20,
+    alignItems: 'center',
+    marginBottom: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    elevation: 2
+  },
+  heroAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#4F46E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10
+  },
+  heroAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '800'
+  },
+  heroNameText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A'
+  },
+  heroSubText: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2
+  },
+  openChatBtn: {
+    marginTop: 12,
+    backgroundColor: '#4F46E5',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8
+  },
+  openChatBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  intelCard: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 14
+  },
+  intelHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+  intelTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  scorePill: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#C7D2FE'
+  },
+  scorePillText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#4F46E5'
+  },
+  strongBadge: {
+    backgroundColor: '#FCE7F3',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 10
+  },
+  strongBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#BE185D'
+  },
+  intelSubText: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4
+  },
+  factorsContainer: {
+    marginTop: 10,
+    gap: 8
+  },
+  factorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10
+  },
+  factorName: {
+    width: 100,
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '600'
+  },
+  factorBarBg: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 4,
+    overflow: 'hidden'
+  },
+  factorBarFg: {
+    height: '100%',
+    backgroundColor: '#4F46E5',
+    borderRadius: 4
+  },
+  factorScore: {
+    width: 36,
+    fontSize: 11,
+    color: '#0F172A',
+    fontWeight: '700',
+    textAlign: 'right'
+  },
+  signalsCard: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 14
+  },
+  signalsCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 14
+  },
+  analyzingBox: {
+    paddingVertical: 20,
+    alignItems: 'center',
+    gap: 8
+  },
+  analyzingText: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    maxWidth: 280
+  },
+  profileSection: {
+    marginBottom: 16
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6
+  },
+  sectionIcon: {
+    fontSize: 14
+  },
+  profileSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155'
+  },
+  tagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6
+  },
+  tagPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4
+  },
+  tagText: {
+    fontSize: 12,
+    color: '#0F172A'
+  },
+  tagConfidence: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#4F46E5'
+  },
+  emptyProfileText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontStyle: 'italic'
+  },
   bottomNavBar: {
     height: 60,
     backgroundColor: '#F8FAFC',
@@ -310,7 +893,10 @@ const styles = StyleSheet.create({
     borderTopColor: '#CBD5E1',
     flexDirection: 'row',
     justifyContent: 'space-around',
-    alignItems: 'center'
+    alignItems: 'center',
+    ...Platform.select({
+      web: { position: 'sticky' as any, bottom: 0, zIndex: 10 }
+    })
   },
   bottomNavItem: {
     alignItems: 'center',
@@ -321,10 +907,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#64748B'
   },
+  bottomNavIconActive: {
+    color: '#4F46E5'
+  },
   bottomNavLabel: {
     fontSize: 10,
     color: '#64748B',
     marginTop: 2,
     fontWeight: '600'
+  },
+  bottomNavLabelActive: {
+    color: '#4F46E5',
+    fontWeight: '700'
   }
 });

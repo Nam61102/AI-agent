@@ -764,7 +764,9 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9'
   },
   selectedChatCard: {
-    backgroundColor: '#FFFFFF'
+    backgroundColor: '#EEF2FF',
+    borderLeftWidth: 3,
+    borderLeftColor: '#4F46E5'
   },
   avatar: {
     width: 44,
@@ -775,7 +777,7 @@ const styles = StyleSheet.create({
     marginRight: 12
   },
   avatarUser: {
-    backgroundColor: '#2563EB'
+    backgroundColor: '#4F46E5'
   },
   avatarGroup: {
     backgroundColor: '#7C3AED'
@@ -803,7 +805,8 @@ const styles = StyleSheet.create({
     marginRight: 8
   },
   chatNameSelected: {
-    color: '#FFFFFF'
+    color: '#4F46E5',
+    fontWeight: '700'
   },
   chatTimestamp: {
     color: '#6B7280',
@@ -812,7 +815,7 @@ const styles = StyleSheet.create({
     flexShrink: 0
   },
   chatTimestampSelected: {
-    color: '#9CA3AF'
+    color: '#4F46E5'
   },
   chatMessageRow: {
     flexDirection: 'row',
@@ -827,7 +830,7 @@ const styles = StyleSheet.create({
     marginRight: 8
   },
   chatMessageSelected: {
-    color: '#9CA3AF'
+    color: '#312E81'
   },
   priorityDotContainer: {
     flexDirection: 'row',

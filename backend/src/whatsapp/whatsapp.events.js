@@ -65,8 +65,9 @@ function extractMessageContent(msg) {
 /**
  * Handle incoming Baileys messages upsert event
  * @param {Object} upsert Baileys upsert payload
+ * @param {string} [accountJid] Canonical account JID
  */
-async function handleIncomingMessages(upsert) {
+async function handleIncomingMessages(upsert, accountJid = 'default_user') {
   if (!upsert || !upsert.messages || !Array.isArray(upsert.messages)) {
     return;
   }
@@ -85,7 +86,7 @@ async function handleIncomingMessages(upsert) {
       const fromMe = Boolean(rawMsg.key.fromMe);
       const { text, type: messageType, hasMedia } = extractMessageContent(rawMsg);
 
-      // If message has no meaningful text content (e.g. protocol sync, sender key distribution, reactions, etc.), skip saving it
+      // If message has no meaningful text content, skip saving it
       if (!text || text.trim() === '') {
         continue;
       }
@@ -93,9 +94,8 @@ async function handleIncomingMessages(upsert) {
       const chatJid = getCanonicalJid(rawChatJid);
 
       // Check if chat/contact is excluded BEFORE saving
-      const existingContact = await contactService.findContactByJid(chatJid);
+      const existingContact = await contactService.findContactByJid(chatJid, accountJid);
       if (existingContact && existingContact.excluded === true) {
-        console.log(`[WhatsAppEvents] Chat JID ${chatJid} is marked as excluded. Skipping message.`);
         continue;
       }
       const senderJid = fromMe
@@ -105,23 +105,26 @@ async function handleIncomingMessages(upsert) {
         ? new Date(rawMsg.messageTimestamp * 1000).toISOString()
         : new Date().toISOString();
 
-      // Find or create chat contact (don't use pushName for groups as it belongs to the sender)
+      // Find or create chat contact scoped to accountJid
       const isGroup = chatJid.endsWith('@g.us');
       const contact = await contactService.findOrCreateContact({
         jid: chatJid,
-        name: isGroup ? null : (rawMsg.pushName || null)
+        name: isGroup ? null : (rawMsg.pushName || null),
+        accountJid
       });
 
       // Also ensure the sender is in the contacts table with their pushName
       if (!fromMe && senderJid !== chatJid && senderJid !== 'me') {
         await contactService.findOrCreateContact({
           jid: senderJid,
-          name: rawMsg.pushName || null
+          name: rawMsg.pushName || null,
+          accountJid
         });
       }
 
       // Construct normalized message object
       const normalizedMessage = {
+        account_jid: accountJid,
         contact_id: contact.id,
         chat_jid: chatJid,
         sender_jid: senderJid,
@@ -133,37 +136,37 @@ async function handleIncomingMessages(upsert) {
         whatsapp_message_id: messageId
       };
 
-    // Save message in Supabase
-    const saved = await messageService.saveMessage(normalizedMessage);
+      // Save message in database scoped to accountJid
+      const saved = await messageService.saveMessage(normalizedMessage);
 
-    if (fromMe) {
-      // If the user sent a message from their mobile/web WhatsApp, auto-dismiss any pending reply_needed actions for this chat
-      try {
-        const supabase = require('../config/supabase');
-        await supabase.query(
-          `UPDATE ai_actions SET status = 'dismissed', updated_at = NOW() 
-           WHERE chat_jid = $1 AND type = 'reply_needed' AND status = 'active'`,
-          [chatJid]
-        );
-        await supabase.query(
-          `UPDATE suggested_replies SET status = 'sent', updated_at = NOW()
-           WHERE chat_jid = $1 AND status = 'pending'`,
-          [chatJid]
-        );
-      } catch (e) {
-        console.warn('[WhatsAppEvents] Failed to dismiss pending replies on outgoing message:', e.message);
+      if (fromMe) {
+        // If the user sent a message, auto-dismiss any pending reply_needed actions for this chat
+        try {
+          const supabase = require('../config/supabase');
+          await supabase.query(
+            `UPDATE ai_actions SET status = 'dismissed', updated_at = NOW() 
+             WHERE chat_jid = $1 AND account_jid = $2 AND type = 'reply_needed' AND status = 'active'`,
+            [chatJid, accountJid]
+          );
+          await supabase.query(
+            `UPDATE suggested_replies SET status = 'sent', updated_at = NOW()
+             WHERE chat_jid = $1 AND account_jid = $2 AND status = 'pending'`,
+            [chatJid, accountJid]
+          );
+        } catch (e) {
+          console.warn('[WhatsAppEvents] Failed to dismiss pending replies on outgoing message:', e.message);
+        }
       }
-    }
-    
-    // Trigger AI Extraction asynchronously
-    if (saved && !upsert.isHistorySync) {
-      const messageProcessor = require('../services/message-processor.service');
-      messageProcessor.process(saved);
-    }
+      
+      // Trigger AI Extraction asynchronously
+      if (saved && !upsert.isHistorySync) {
+        const messageProcessor = require('../services/message-processor.service');
+        messageProcessor.process(saved);
+      }
 
-  } catch (err) {
-    console.error('[WhatsAppEvents] Error processing message:', err.message);
-  }
+    } catch (err) {
+      console.error('[WhatsAppEvents] Error processing message:', err.message);
+    }
   }
 }
 

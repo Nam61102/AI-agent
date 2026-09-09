@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { theme } from './src/theme';
 import { SplashScreen } from './src/screens/SplashScreen';
@@ -8,14 +8,21 @@ import { WhatsAppQRScreen } from './src/screens/whatsapp/WhatsAppQRScreen';
 import { WhatsAppChatListScreen } from './src/screens/whatsapp/WhatsAppChatListScreen';
 import { ExtractionsScreen } from './src/screens/extractions/ExtractionsScreen';
 import { PeopleScreen } from './src/screens/PeopleScreen';
+import { useWhatsApp } from './src/hooks/useWhatsApp';
 
 type ScreenName = 'HOME_SCREEN' | 'CONNECTION_SCREEN' | 'QR_SCREEN' | 'CHAT_SCREEN' | 'EXTRACTIONS_SCREEN' | 'PEOPLE_SCREEN';
 
 export default function App() {
+  const { isConnected, status, connect } = useWhatsApp();
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [currentScreen, setCurrentScreen] = useState<ScreenName>('HOME_SCREEN');
   const [targetChatJid, setTargetChatJid] = useState<string | undefined>(undefined);
   const [highlightText, setHighlightText] = useState<string | undefined>(undefined);
+
+  // Attempt auto-connect check on startup
+  useEffect(() => {
+    connect();
+  }, [connect]);
 
   const handleOpenChat = (jid?: string, messageText?: string) => {
     setTargetChatJid(jid);
@@ -23,11 +30,27 @@ export default function App() {
     setCurrentScreen('CHAT_SCREEN');
   };
 
+  // If splash screen is playing on launch
+  if (showSplash) {
+    return <SplashScreen onFinish={() => setShowSplash(false)} />;
+  }
+
+  // Pure WhatsApp QR Scan Authentication Gate:
+  // If this device's session is not connected, show the QR Login Screen
+  if (!isConnected) {
+    return (
+      <View style={styles.container}>
+        <WhatsAppQRScreen
+          isLoginGate={true}
+          onLoginSuccess={() => setCurrentScreen('HOME_SCREEN')}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {showSplash ? (
-        <SplashScreen onFinish={() => setShowSplash(false)} />
-      ) : currentScreen === 'HOME_SCREEN' ? (
+      {currentScreen === 'HOME_SCREEN' ? (
         <HomeScreen
           onConnect={() => setCurrentScreen('CONNECTION_SCREEN')}
           onOpenChat={handleOpenChat}
@@ -46,6 +69,7 @@ export default function App() {
       ) : currentScreen === 'QR_SCREEN' ? (
         <WhatsAppQRScreen
           onBackPress={() => setCurrentScreen('CONNECTION_SCREEN')}
+          onLoginSuccess={() => setCurrentScreen('HOME_SCREEN')}
         />
       ) : currentScreen === 'CHAT_SCREEN' ? (
         <WhatsAppChatListScreen
@@ -72,6 +96,7 @@ export default function App() {
           onNavigatePeople={() => setCurrentScreen('PEOPLE_SCREEN')}
           onNavigateExtractions={() => setCurrentScreen('EXTRACTIONS_SCREEN')}
           onNavigateConnection={() => setCurrentScreen('CONNECTION_SCREEN')}
+          onOpenChat={handleOpenChat}
         />
       )}
     </View>
@@ -81,6 +106,6 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background
+    backgroundColor: '#EDF2F7'
   }
 });

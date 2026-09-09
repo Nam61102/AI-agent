@@ -5,15 +5,16 @@ const replyService = require('../ai/reply.service');
 async function suggestReply(req, res) {
   try {
     const { jid, text } = req.body;
+    const accountJid = req.accountJid;
     if (!jid || !text) return res.status(400).json({ success: false, error: 'jid and text are required' });
 
     const [contactResult, messagesResult] = await Promise.all([
-      supabase.query('SELECT name FROM contacts WHERE jid = $1 LIMIT 1', [jid]),
+      supabase.query('SELECT name FROM contacts WHERE jid = $1 AND account_jid = $2 LIMIT 1', [jid, accountJid]),
       supabase.query(
         `SELECT sender_jid, from_me, text, timestamp FROM messages
-         WHERE chat_jid = $1 AND text IS NOT NULL AND TRIM(text) != ''
+         WHERE chat_jid = $1 AND account_jid = $2 AND text IS NOT NULL AND TRIM(text) != ''
          ORDER BY timestamp DESC LIMIT 20`,
-        [jid]
+        [jid, accountJid]
       )
     ]);
 
@@ -40,16 +41,17 @@ async function suggestReply(req, res) {
 async function getActions(req, res) {
   try {
     const { status = 'active', limit = 50 } = req.query;
+    const accountJid = req.accountJid;
 
     // Auto-dismiss active actions if the underlying message is older than 24 hours
     if (status === 'active') {
       await supabase.query(`
         UPDATE ai_actions 
         SET status = 'dismissed' 
-        WHERE status = 'active' AND source_message_id IN (
-          SELECT id FROM messages WHERE timestamp < NOW() - INTERVAL '24 hours'
+        WHERE status = 'active' AND account_jid = $1 AND source_message_id IN (
+          SELECT id FROM messages WHERE timestamp < NOW() - INTERVAL '24 hours' AND account_jid = $1
         )
-      `);
+      `, [accountJid]);
     }
 
     const query = `
@@ -76,12 +78,12 @@ async function getActions(req, res) {
       LEFT JOIN contacts c ON a.contact_id = c.id
       LEFT JOIN messages m ON a.source_message_id = m.id
       LEFT JOIN suggested_replies sr ON a.suggested_reply_id = sr.id
-      WHERE a.status = $1
+      WHERE a.status = $1 AND a.account_jid = $2
       ORDER BY a.chat_jid, a.created_at DESC
-      LIMIT $2;
+      LIMIT $3;
     `;
 
-    const result = await supabase.query(query, [status, limit]);
+    const result = await supabase.query(query, [status, accountJid, limit]);
 
     const actions = result.rows.map(row => {
       const isGroup = row.chat_jid && row.chat_jid.endsWith('@g.us');
@@ -129,6 +131,7 @@ async function getActions(req, res) {
 async function getActionById(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
+    const accountJid = req.accountJid;
     if (isNaN(id)) {
       return res.status(400).json({ success: false, error: 'Invalid action ID' });
     }
@@ -156,11 +159,11 @@ async function getActionById(req, res) {
       LEFT JOIN contacts c ON a.contact_id = c.id
       LEFT JOIN messages m ON a.source_message_id = m.id
       LEFT JOIN suggested_replies sr ON a.suggested_reply_id = sr.id
-      WHERE a.id = $1
+      WHERE a.id = $1 AND a.account_jid = $2
       LIMIT 1;
     `;
 
-    const result = await supabase.query(query, [id]);
+    const result = await supabase.query(query, [id, accountJid]);
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Action not found' });
     }
@@ -206,6 +209,7 @@ async function getActionById(req, res) {
 async function dismissAction(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
+    const accountJid = req.accountJid;
     if (isNaN(id)) {
       return res.status(400).json({ success: false, error: 'Invalid action ID' });
     }
@@ -213,15 +217,15 @@ async function dismissAction(req, res) {
     const updateActionQuery = `
       UPDATE ai_actions
       SET status = 'dismissed', updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND account_jid = $2
       RETURNING suggested_reply_id;
     `;
-    const actionRes = await supabase.query(updateActionQuery, [id]);
+    const actionRes = await supabase.query(updateActionQuery, [id, accountJid]);
 
     if (actionRes.rows.length > 0 && actionRes.rows[0].suggested_reply_id) {
       await supabase.query(
-        `UPDATE suggested_replies SET status = 'dismissed', updated_at = NOW() WHERE id = $1`,
-        [actionRes.rows[0].suggested_reply_id]
+        `UPDATE suggested_replies SET status = 'dismissed', updated_at = NOW() WHERE id = $1 AND account_jid = $2`,
+        [actionRes.rows[0].suggested_reply_id, accountJid]
       );
     }
 
@@ -234,11 +238,12 @@ async function dismissAction(req, res) {
 
 async function getDashboardSummary(req, res) {
   try {
+    const accountJid = req.accountJid;
     const [messagesCountRes, repliesCountRes, activeChatsRes, pendingActionsRes] = await Promise.all([
-      supabase.query(`SELECT COUNT(*) FROM messages WHERE timestamp >= NOW() - INTERVAL '24 hours'`),
-      supabase.query(`SELECT COUNT(*) FROM suggested_replies WHERE created_at >= NOW() - INTERVAL '24 hours'`),
-      supabase.query(`SELECT COUNT(DISTINCT chat_jid) FROM messages WHERE timestamp >= NOW() - INTERVAL '24 hours'`),
-      supabase.query(`SELECT COUNT(*) FROM ai_actions WHERE status = 'active'`)
+      supabase.query(`SELECT COUNT(*) FROM messages WHERE account_jid = $1 AND timestamp >= NOW() - INTERVAL '24 hours'`, [accountJid]),
+      supabase.query(`SELECT COUNT(*) FROM suggested_replies WHERE account_jid = $1 AND created_at >= NOW() - INTERVAL '24 hours'`, [accountJid]),
+      supabase.query(`SELECT COUNT(DISTINCT chat_jid) FROM messages WHERE account_jid = $1 AND timestamp >= NOW() - INTERVAL '24 hours'`, [accountJid]),
+      supabase.query(`SELECT COUNT(*) FROM ai_actions WHERE account_jid = $1 AND status = 'active'`, [accountJid])
     ]);
 
     return res.status(200).json({
@@ -258,22 +263,25 @@ async function getDashboardSummary(req, res) {
 
 async function analyzeActiveChats(req, res) {
   try {
+    const accountJid = req.accountJid;
     const messageProcessor = require('../services/message-processor.service');
     const query = `
       SELECT DISTINCT ON (chat_jid)
         m.*
       FROM messages m
-      WHERE m.from_me = false
+      WHERE m.account_jid = $1
+        AND m.from_me = false
         AND m.message_type = 'text'
         AND m.text IS NOT NULL
         AND TRIM(m.text) != ''
         AND m.chat_jid NOT LIKE '%@newsletter'
         AND m.chat_jid NOT LIKE '%@g.us'
+        AND m.chat_jid NOT LIKE '%@lid'
       ORDER BY m.chat_jid, m.timestamp DESC
       LIMIT 10;
     `;
 
-    const result = await supabase.query(query);
+    const result = await supabase.query(query, [accountJid]);
     for (const msg of result.rows) {
       await messageProcessor._processAsync(msg);
     }

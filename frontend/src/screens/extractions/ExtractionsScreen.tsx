@@ -133,8 +133,8 @@ export const ExtractionsScreen: React.FC<ExtractionsScreenProps> = ({
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigatePeople} activeOpacity={0.8}>
-          <Text style={[styles.bottomNavIcon, styles.bottomNavIconActive]}>👥</Text>
-          <Text style={[styles.bottomNavLabel, styles.bottomNavLabelActive]}>People</Text>
+          <Text style={styles.bottomNavIcon}>👥</Text>
+          <Text style={styles.bottomNavLabel}>People</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.bottomNavItem} activeOpacity={0.8}>

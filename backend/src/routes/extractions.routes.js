@@ -2,11 +2,15 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabase');
 const { formatPhoneNumber } = require('../whatsapp/whatsapp.utils');
+const { sessionMiddleware } = require('../middleware/session.middleware');
+
+router.use(sessionMiddleware);
 
 // GET /api/extractions
 router.get('/', async (req, res) => {
   try {
     const { type, status, contact_id } = req.query;
+    const accountJid = req.accountJid;
     
     let query = `
       SELECT e.*, m.text AS source_text, m.sender_jid, m.chat_jid,
@@ -16,47 +20,45 @@ router.get('/', async (req, res) => {
         m.from_me
       FROM extractions e
       LEFT JOIN messages m ON m.id = e.source_message_id
-      LEFT JOIN contacts sender ON sender.jid = m.sender_jid
-      LEFT JOIN contacts chat ON chat.jid = m.chat_jid
-      LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending'
-      WHERE e.type != 'none' AND e.confidence >= 0.90
+      LEFT JOIN contacts sender ON sender.jid = m.sender_jid AND sender.account_jid = $1
+      LEFT JOIN contacts chat ON chat.jid = m.chat_jid AND chat.account_jid = $1
+      LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending' AND sr.account_jid = $1
+      WHERE e.account_jid = $1
+      AND e.type != 'none' AND e.confidence >= 0.90
       AND (m.timestamp >= NOW() - INTERVAL '24 hours' OR m.timestamp IS NULL)`;
     
-    const values = [];
-    let paramIndex = 1;
+    const values = [accountJid];
+    let paramIndex = 2;
 
     if (type) {
-      query += ` AND type = $${paramIndex++}`;
+      query += ` AND e.type = $${paramIndex++}`;
       values.push(type);
     }
     if (status) {
-      query += ` AND status = $${paramIndex++}`;
+      query += ` AND e.status = $${paramIndex++}`;
       values.push(status);
     }
     if (contact_id) {
-      query += ` AND contact_id = $${paramIndex++}`;
+      query += ` AND e.contact_id = $${paramIndex++}`;
       values.push(parseInt(contact_id, 10));
     }
 
-    query += ' ORDER BY extracted_at DESC';
+    query += ' ORDER BY e.extracted_at DESC';
 
     const result = await supabase.query(query, values);
 
     const now = new Date();
     
     const validRows = result.rows.filter(row => {
-      // If the AI successfully parsed a date/time from the message
       if (row.payload && row.payload.date) {
         let eventDateStr = row.payload.date;
         if (row.payload.time) {
           eventDateStr += 'T' + row.payload.time + ':00';
         } else {
-          // If no time, assume end of the day (23:59:59)
           eventDateStr += 'T23:59:59';
         }
         
         const eventDate = new Date(eventDateStr);
-        // If it's a valid date and the event has completely passed, hide it!
         if (!isNaN(eventDate.getTime()) && eventDate < now) {
           return false;
         }
@@ -84,6 +86,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
+    const accountJid = req.accountJid;
     if (isNaN(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
 
     const result = await supabase.query(
@@ -94,11 +97,11 @@ router.get('/:id', async (req, res) => {
         m.from_me
        FROM extractions e
        LEFT JOIN messages m ON m.id = e.source_message_id
-       LEFT JOIN contacts sender ON sender.jid = m.sender_jid
-       LEFT JOIN contacts chat ON chat.jid = m.chat_jid
-      LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending'
-       WHERE e.id = $1 AND e.type != 'none'`,
-      [id]
+       LEFT JOIN contacts sender ON sender.jid = m.sender_jid AND sender.account_jid = $2
+       LEFT JOIN contacts chat ON chat.jid = m.chat_jid AND chat.account_jid = $2
+       LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending' AND sr.account_jid = $2
+       WHERE e.id = $1 AND e.account_jid = $2 AND e.type != 'none'`,
+      [id, accountJid]
     );
 
     if (result.rows.length === 0) {
@@ -123,9 +126,10 @@ router.get('/:id', async (req, res) => {
 router.post('/:id/confirm', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
+    const accountJid = req.accountJid;
     if (isNaN(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
     
-    await supabase.query('UPDATE extractions SET status = $1 WHERE id = $2', ['active', id]);
+    await supabase.query('UPDATE extractions SET status = $1 WHERE id = $2 AND account_jid = $3', ['active', id, accountJid]);
     res.json({ success: true });
   } catch (error) {
     console.error('[Extractions API] POST /:id/confirm error:', error.message);
@@ -137,9 +141,10 @@ router.post('/:id/confirm', async (req, res) => {
 router.post('/:id/reject', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
+    const accountJid = req.accountJid;
     if (isNaN(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
     
-    await supabase.query('UPDATE extractions SET status = $1 WHERE id = $2', ['rejected', id]);
+    await supabase.query('UPDATE extractions SET status = $1 WHERE id = $2 AND account_jid = $3', ['rejected', id, accountJid]);
     res.json({ success: true });
   } catch (error) {
     console.error('[Extractions API] POST /:id/reject error:', error.message);
@@ -151,9 +156,10 @@ router.post('/:id/reject', async (req, res) => {
 router.get('/source-message/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
+    const accountJid = req.accountJid;
     if (isNaN(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
     
-    const result = await supabase.query('SELECT text FROM messages WHERE id = $1', [id]);
+    const result = await supabase.query('SELECT text FROM messages WHERE id = $1 AND account_jid = $2', [id, accountJid]);
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Message not found' });
     }
@@ -167,12 +173,13 @@ router.get('/source-message/:id', async (req, res) => {
 router.post('/:jid/historical', async (req, res) => {
   try {
     const { jid } = req.params;
+    const accountJid = req.accountJid;
     const profileService = require('../ai/profile.service');
 
     // Fetch up to 1 year of messages for contact
     const { rows: messages } = await supabase.query(
-      "SELECT id, text, from_me, timestamp FROM messages WHERE chat_jid = $1 AND timestamp >= NOW() - INTERVAL '1 year' ORDER BY timestamp ASC",
-      [jid]
+      "SELECT id, text, from_me, timestamp FROM messages WHERE chat_jid = $1 AND account_jid = $2 AND timestamp >= NOW() - INTERVAL '1 year' ORDER BY timestamp ASC",
+      [jid, accountJid]
     );
 
     if (!messages || messages.length === 0) {
@@ -187,9 +194,9 @@ router.post('/:jid/historical', async (req, res) => {
       for (const item of result.data) {
         if (!item.type || !item.title) continue;
         await supabase.query(
-          `INSERT INTO extractions (source_message_id, type, title, status, importance, extracted_at, confidence) 
-           VALUES ($1, $2, $3, $4, $5, NOW(), 0.95)`,
-          [latestMessageId, item.type, item.title, item.status || 'pending', item.importance || 'medium']
+          `INSERT INTO extractions (source_message_id, type, title, status, importance, extracted_at, confidence, account_jid) 
+           VALUES ($1, $2, $3, $4, $5, NOW(), 0.95, $6)`,
+          [latestMessageId, item.type, item.title, item.status || 'pending', item.importance || 'medium', accountJid]
         );
       }
     }
