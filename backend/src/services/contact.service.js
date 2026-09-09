@@ -44,8 +44,8 @@ async function findOrCreateContact({ jid, name }) {
   
   if (existing) {
     // If we have a valid new name and it's different from the existing one, update it.
-    // Also update if the existing name was just the phone number (or missing) and we now have a real name.
-    if (name && existing.name !== name && (existing.name === jid.split('@')[0] || existing.name === defaultFormatted)) {
+    // Also update if the existing name was just the phone number (or missing/null) and we now have a real name.
+    if (name && existing.name !== name && (!existing.name || existing.name === jid.split('@')[0] || existing.name === defaultFormatted)) {
       await supabase.query('UPDATE contacts SET name = $1, updated_at = NOW() WHERE jid = $2', [name, jid]);
       existing.name = name;
     }

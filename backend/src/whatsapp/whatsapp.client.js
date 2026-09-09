@@ -342,7 +342,7 @@ class WhatsAppClient {
             
             try {
               const supabase = require('../config/supabase');
-              await supabase.query('DELETE FROM extractions; DELETE FROM messages; DELETE FROM contacts;');
+              await supabase.query('DELETE FROM ai_actions; DELETE FROM suggested_replies; DELETE FROM extractions; DELETE FROM messages; DELETE FROM contacts;');
             } catch (e) {
               console.error('[WhatsAppClient] Error purging old account DB data:', e.message);
             }
@@ -370,7 +370,7 @@ class WhatsAppClient {
             // Auto wipe DB on disconnect/logout
             try {
               const supabase = require('../config/supabase');
-              supabase.query('DELETE FROM extractions; DELETE FROM messages; DELETE FROM contacts;').catch(e => console.error(e));
+              await supabase.query('DELETE FROM ai_actions; DELETE FROM suggested_replies; DELETE FROM extractions; DELETE FROM messages; DELETE FROM contacts;');
               console.log('[WhatsAppClient] Database wiped clean on logout.');
             } catch (err) {}
 
@@ -422,17 +422,8 @@ class WhatsAppClient {
 
         // Process historical messages through the standard pipeline (which saves them and runs AI extractions)
         if (messages && messages.length > 0) {
-          // Sort and take the 100 most recent messages for AI extraction to prevent rate limits
-          const recentMessages = [...messages].sort((a, b) => {
-            let tsA = a.messageTimestamp || 0;
-            let tsB = b.messageTimestamp || 0;
-            if (typeof tsA === 'object' && 'low' in tsA) tsA = tsA.low;
-            if (typeof tsB === 'object' && 'low' in tsB) tsB = tsB.low;
-            return tsB - tsA; // descending
-          }).slice(0, 100);
-
-          // Process in background
-          events.handleIncomingMessages({ messages: recentMessages }).catch(err => {
+          // Process in background and save ALL historical messages to DB
+          events.handleIncomingMessages({ messages: messages, isHistorySync: true }).catch(err => {
             console.error('[WhatsAppClient] Error processing history messages:', err.message);
           });
         }
@@ -640,11 +631,11 @@ class WhatsAppClient {
     this.contactNames.clear();
     
     // 4. Wipe DB tables so no data remains for disconnected user
-    try {
-      const supabase = require('../config/supabase');
-      await supabase.query('DELETE FROM extractions; DELETE FROM messages; DELETE FROM contacts;');
-      console.log('[WhatsAppClient] Database wiped clean on disconnect.');
-    } catch (err) {
+      try {
+        const supabase = require('../config/supabase');
+        await supabase.query('DELETE FROM ai_actions; DELETE FROM suggested_replies; DELETE FROM extractions; DELETE FROM messages; DELETE FROM contacts;');
+        console.log('[WhatsAppClient] Database wiped clean on disconnect.');
+      } catch (err) {
       console.error('[WhatsAppClient] Error wiping DB on disconnect:', err.message);
     }
 

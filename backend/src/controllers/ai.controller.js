@@ -41,6 +41,17 @@ async function getActions(req, res) {
   try {
     const { status = 'active', limit = 50 } = req.query;
 
+    // Auto-dismiss active actions if the underlying message is older than 24 hours
+    if (status === 'active') {
+      await supabase.query(`
+        UPDATE ai_actions 
+        SET status = 'dismissed' 
+        WHERE status = 'active' AND source_message_id IN (
+          SELECT id FROM messages WHERE timestamp < NOW() - INTERVAL '24 hours'
+        )
+      `);
+    }
+
     const query = `
       SELECT DISTINCT ON (a.chat_jid)
         a.id AS action_id,

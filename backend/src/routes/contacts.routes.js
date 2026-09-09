@@ -43,6 +43,37 @@ function fallbackProfile(messages) {
   };
 }
 
+// Get all contacts
+router.get('/all', async (req, res) => {
+  try {
+    const query = `
+      SELECT
+        c.*,
+        COUNT(m.id) AS message_count,
+        LEAST(COUNT(m.id), 100) AS calculated_score
+      FROM contacts c
+      LEFT JOIN messages m ON c.jid = m.chat_jid
+      WHERE c.jid NOT LIKE '%@g.us'
+        AND c.jid NOT LIKE '%@newsletter'
+      GROUP BY c.id
+      ORDER BY COALESCE(NULLIF(c.relationship_score, 0), LEAST(COUNT(m.id), 100)) DESC,
+               message_count DESC
+    `;
+    
+    const { rows } = await pool.query(query);
+    
+    const formatted = (rows || []).map(c => ({
+      ...c,
+      relationship_score: c.relationship_score > 0 ? c.relationship_score : parseInt(c.calculated_score || 0)
+    }));
+    
+    res.json({ success: true, data: formatted });
+  } catch (error) {
+    console.error('Error fetching all contacts:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Get top 10 contacts based on message count (approximation of relationship strength)
 router.get('/top', async (req, res) => {
   try {
@@ -83,9 +114,9 @@ router.post('/:jid/analyze-profile', async (req, res) => {
   try {
     const { jid } = req.params;
     
-    // Fetch last 100 messages for this contact
+    // Fetch up to 1 year of messages for this contact in chronological order
     const { rows: messages } = await pool.query(
-      'SELECT text, from_me, timestamp FROM messages WHERE chat_jid = $1 ORDER BY timestamp DESC LIMIT 100',
+      "SELECT text, from_me, timestamp FROM messages WHERE chat_jid = $1 AND timestamp >= NOW() - INTERVAL '1 year' ORDER BY timestamp ASC",
       [jid]
     );
 
@@ -93,8 +124,8 @@ router.post('/:jid/analyze-profile', async (req, res) => {
       return res.json({ success: true, data: { likes: [], dislikes: [], interests: [], analyzedAt: null }});
     }
 
-    // AI Analysis
-    const result = await profileService.analyzeProfile(messages.reverse());
+    // AI Analysis (Parallel Map-Reduce Chunking)
+    const result = await profileService.analyzeProfileInChunks(messages);
     
     if (!result.success) {
       console.warn('[Contacts API] Profile analysis unavailable:', result.error);
@@ -108,7 +139,11 @@ router.post('/:jid/analyze-profile', async (req, res) => {
     const profile = {
       likes: normalizeProfileItems(result.data.likes),
       dislikes: normalizeProfileItems(result.data.dislikes),
-      interests: normalizeProfileItems(result.data.interests)
+      interests: normalizeProfileItems(result.data.interests),
+      birthdays: normalizeProfileItems(result.data.birthdays),
+      anniversaries: normalizeProfileItems(result.data.anniversaries),
+      events: normalizeProfileItems(result.data.events),
+      important: normalizeProfileItems(result.data.important)
     };
     const likesStr = profile.likes.map(item => item.item).join(', ');
     const dislikesStr = profile.dislikes.map(item => item.item).join(', ');

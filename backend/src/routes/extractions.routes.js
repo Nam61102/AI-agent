@@ -19,7 +19,8 @@ router.get('/', async (req, res) => {
       LEFT JOIN contacts sender ON sender.jid = m.sender_jid
       LEFT JOIN contacts chat ON chat.jid = m.chat_jid
       LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending'
-      WHERE e.type != 'none' AND e.confidence >= 0.90`;
+      WHERE e.type != 'none' AND e.confidence >= 0.90
+      AND (m.timestamp >= NOW() - INTERVAL '24 hours' OR m.timestamp IS NULL)`;
     
     const values = [];
     let paramIndex = 1;
@@ -41,7 +42,29 @@ router.get('/', async (req, res) => {
 
     const result = await supabase.query(query, values);
 
-    const formattedData = result.rows.map(row => {
+    const now = new Date();
+    
+    const validRows = result.rows.filter(row => {
+      // If the AI successfully parsed a date/time from the message
+      if (row.payload && row.payload.date) {
+        let eventDateStr = row.payload.date;
+        if (row.payload.time) {
+          eventDateStr += 'T' + row.payload.time + ':00';
+        } else {
+          // If no time, assume end of the day (23:59:59)
+          eventDateStr += 'T23:59:59';
+        }
+        
+        const eventDate = new Date(eventDateStr);
+        // If it's a valid date and the event has completely passed, hide it!
+        if (!isNaN(eventDate.getTime()) && eventDate < now) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    const formattedData = validRows.map(row => {
       row.chat_name = row.db_chat_name || (row.chat_jid && row.chat_jid.endsWith('@g.us') ? 'Group' : formatPhoneNumber(row.chat_jid ? row.chat_jid.split('@')[0] : ''));
       row.sender_name = row.from_me ? 'You' : (row.db_sender_name || formatPhoneNumber(row.sender_jid ? row.sender_jid.split('@')[0] : ''));
       return row;
@@ -136,6 +159,44 @@ router.get('/source-message/:id', async (req, res) => {
     }
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/extractions/:jid/historical
+router.post('/:jid/historical', async (req, res) => {
+  try {
+    const { jid } = req.params;
+    const profileService = require('../ai/profile.service');
+
+    // Fetch up to 1 year of messages for contact
+    const { rows: messages } = await supabase.query(
+      "SELECT id, text, from_me, timestamp FROM messages WHERE chat_jid = $1 AND timestamp >= NOW() - INTERVAL '1 year' ORDER BY timestamp ASC",
+      [jid]
+    );
+
+    if (!messages || messages.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const result = await profileService.extractHistoryInChunks(messages);
+
+    if (result.success && result.data.length > 0) {
+      const latestMessageId = messages[messages.length - 1].id;
+      
+      for (const item of result.data) {
+        if (!item.type || !item.title) continue;
+        await supabase.query(
+          `INSERT INTO extractions (source_message_id, type, title, status, importance, extracted_at, confidence) 
+           VALUES ($1, $2, $3, $4, $5, NOW(), 0.95)`,
+          [latestMessageId, item.type, item.title, item.status || 'pending', item.importance || 'medium']
+        );
+      }
+    }
+
+    res.json({ success: true, data: result.data || [] });
+  } catch (error) {
+    console.error('[Extractions API] POST /:jid/historical error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });

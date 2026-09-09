@@ -7,8 +7,10 @@ if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is required to connect to Supabase');
 }
 
+const schema = process.env.DB_SCHEMA || 'public';
+
 const supabase = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL + (process.env.DATABASE_URL.includes('?') ? '&' : '?') + `options=-c search_path=${schema}`,
   max: 5
 });
 

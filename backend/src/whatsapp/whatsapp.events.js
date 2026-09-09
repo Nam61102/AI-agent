@@ -105,11 +105,20 @@ async function handleIncomingMessages(upsert) {
         ? new Date(rawMsg.messageTimestamp * 1000).toISOString()
         : new Date().toISOString();
 
-      // Find or create contact
+      // Find or create chat contact (don't use pushName for groups as it belongs to the sender)
+      const isGroup = chatJid.endsWith('@g.us');
       const contact = await contactService.findOrCreateContact({
         jid: chatJid,
-        name: rawMsg.pushName || null
+        name: isGroup ? null : (rawMsg.pushName || null)
       });
+
+      // Also ensure the sender is in the contacts table with their pushName
+      if (!fromMe && senderJid !== chatJid && senderJid !== 'me') {
+        await contactService.findOrCreateContact({
+          jid: senderJid,
+          name: rawMsg.pushName || null
+        });
+      }
 
       // Construct normalized message object
       const normalizedMessage = {
@@ -147,7 +156,7 @@ async function handleIncomingMessages(upsert) {
     }
     
     // Trigger AI Extraction asynchronously
-    if (saved) {
+    if (saved && !upsert.isHistorySync) {
       const messageProcessor = require('../services/message-processor.service');
       messageProcessor.process(saved);
     }

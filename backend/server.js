@@ -52,6 +52,8 @@ app.get('/api/health', (req, res) => {
 });
 
 const aiRoutes = require('./src/routes/ai.routes');
+const relationshipRoutes = require('./src/routes/relationship.routes');
+const alertsRoutes = require('./src/routes/alerts.routes');
 
 // WhatsApp API endpoints
 app.use('/api/whatsapp', whatsappRoutes);
@@ -59,6 +61,11 @@ app.use('/api/extractions', extractionsRoutes);
 app.use('/api/contacts', require('./src/routes/contacts.routes'));
 app.use('/api/ai', aiRoutes);
 app.use('/api/dashboard', aiRoutes);
+app.use('/api/relationship', relationshipRoutes);
+app.use('/api/alerts', alertsRoutes);
+
+// Cron Jobs
+require('./src/jobs/nightly-scoring.job');
 
 // Handle server errors gracefully (e.g. EADDRINUSE)
 server.on('error', (err) => {
