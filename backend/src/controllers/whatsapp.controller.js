@@ -163,12 +163,12 @@ async function sendMessage(req, res) {
       const supabase = require('../config/supabase');
       await supabase.query(
         `UPDATE ai_actions SET status = 'dismissed', updated_at = NOW() 
-         WHERE chat_jid = $1 AND (account_jid = $2 OR account_jid = 'default_user') AND type = 'reply_needed' AND status = 'active'`,
+         WHERE chat_jid = $1 AND account_jid = $2 AND type = 'reply_needed' AND status = 'active'`,
         [canonicalJid, accountJid]
       );
       await supabase.query(
         `UPDATE suggested_replies SET status = 'sent', updated_at = NOW()
-         WHERE chat_jid = $1 AND (account_jid = $2 OR account_jid = 'default_user') AND status = 'pending'`,
+         WHERE chat_jid = $1 AND account_jid = $2 AND status = 'pending'`,
         [canonicalJid, accountJid]
       );
     } catch (e) {}
@@ -198,7 +198,7 @@ async function getCurrentContacts(req, res) {
 async function getRecentChats(req, res) {
   try {
     const accountJid = req.accountJid;
-    const limitHours = req.query.hours || 12;
+    const limitHours = req.query.hours ? parseInt(req.query.hours, 10) : 24;
     const chats = await messageService.getChats(accountJid, limitHours);
     return res.status(200).json({
       success: true,
@@ -215,9 +215,10 @@ async function getChatMessages(req, res) {
     const { jid } = req.params;
     const accountJid = req.accountJid;
     const limit = parseInt(req.query.limit, 10) || 50;
+    const hours = req.query.hours ? parseInt(req.query.hours, 10) : null;
     if (!jid) return res.status(400).json({ success: false, error: 'JID parameter is required' });
 
-    const messages = await messageService.getChatMessages(jid, limit, accountJid);
+    const messages = await messageService.getChatMessages(jid, limit, accountJid, hours);
     return res.status(200).json({
       success: true,
       jid,

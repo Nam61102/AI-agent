@@ -17,15 +17,17 @@ class MessageProcessorService {
   }
 
   /**
-   * Controlled backfill processing (only recent 15 minutes by default on startup)
+   * Controlled backfill processing for unreplied incoming messages
    */
-  async processPendingMessages(limit = 10, accountJid) {
-    const params = [limit];
+  async processPendingMessages(limit = 15, accountJid) {
+    const params = [];
     let accountFilter = '';
     if (accountJid) {
-      params.unshift(accountJid);
-      accountFilter = 'AND m.account_jid = $1';
+      params.push(accountJid);
+      accountFilter = `AND m.account_jid = $${params.length}`;
     }
+    params.push(limit);
+    const limitParam = `$${params.length}`;
 
     const query = `
       SELECT m.*
@@ -34,21 +36,40 @@ class MessageProcessorService {
         AND m.from_me = false
         AND NULLIF(TRIM(m.text), '') IS NOT NULL
         ${accountFilter}
-        AND m.timestamp >= NOW() - INTERVAL '15 minutes'
+        AND m.timestamp >= NOW() - INTERVAL '24 hours'
         AND NOT EXISTS (
           SELECT 1 FROM suggested_replies sr WHERE sr.source_message_id = m.id
         )
       ORDER BY m.timestamp DESC
-      LIMIT $${params.length};
+      LIMIT ${limitParam};
     `;
 
     try {
-      const result = await supabase.query(query, params);
+      let result = await supabase.query(query, params);
+      
+      // If none found in 24 hours, check latest unreplied messages
+      if (result.rows.length === 0) {
+        const fallbackQuery = `
+          SELECT m.*
+          FROM messages m
+          WHERE m.message_type = 'text'
+            AND m.from_me = false
+            AND NULLIF(TRIM(m.text), '') IS NOT NULL
+            ${accountFilter}
+            AND NOT EXISTS (
+              SELECT 1 FROM suggested_replies sr WHERE sr.source_message_id = m.id
+            )
+          ORDER BY m.timestamp DESC
+          LIMIT ${limitParam};
+        `;
+        result = await supabase.query(fallbackQuery, params);
+      }
+
       if (result.rows.length === 0) {
         return;
       }
 
-      console.log(`[AI] Processing ${result.rows.length} recent pending message(s)`);
+      console.log(`[AI] Processing ${result.rows.length} pending message(s) for account [${accountJid || 'all'}]`);
 
       for (const message of result.rows) {
         const res = await this._processAsync(message);
@@ -56,7 +77,7 @@ class MessageProcessorService {
           console.warn('[AI] Rate limit reached across models. Pausing queue.');
           break;
         }
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
     } catch (error) {
       console.error('[AI] Pending message processing failed:', error.message);

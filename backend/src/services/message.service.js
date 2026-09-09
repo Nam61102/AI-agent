@@ -74,12 +74,13 @@ async function saveMessage(msg) {
 /**
  * Fetch active chats for account_jid ordered by timestamp DESC
  */
-async function getChats(accountJid, limitHours = 12) {
-  const params = [];
-  let accountFilter = '';
-  if (accountJid) {
-    params.push(accountJid);
-    accountFilter = `AND account_jid = $${params.length}`;
+async function getChats(accountJid, limitHours = 24) {
+  if (!accountJid) return [];
+
+  const params = [accountJid];
+  let timeFilter = '';
+  if (limitHours && parseInt(limitHours, 10) > 0) {
+    timeFilter = `AND timestamp >= NOW() - INTERVAL '${parseInt(limitHours, 10)} hours'`;
   }
 
   const query = `
@@ -95,17 +96,44 @@ async function getChats(accountJid, limitHours = 12) {
       FROM messages
       WHERE chat_jid NOT LIKE '%@newsletter'
         AND chat_jid NOT LIKE '%@lid'
-        ${accountFilter}
-        AND timestamp >= NOW() - INTERVAL '${parseInt(limitHours)} hours'
+        AND account_jid = $1
+        ${timeFilter}
       ORDER BY chat_jid, timestamp DESC
     ) m
-    LEFT JOIN contacts c ON m.chat_jid = c.jid AND (m.account_jid = c.account_jid OR c.account_jid IS NULL)
+    LEFT JOIN contacts c ON m.chat_jid = c.jid AND m.account_jid = c.account_jid
     ORDER BY 
       m.timestamp DESC;
   `;
 
   try {
-    const result = await supabase.query(query, params);
+    let result = await supabase.query(query, params);
+    
+    // If no chats in specific hours window and timeFilter was applied, fallback to latest chats
+    if (result.rows.length === 0 && timeFilter) {
+      const fallbackQuery = `
+        SELECT 
+          m.chat_jid AS jid,
+          c.name AS db_name,
+          (m.chat_jid LIKE '%@g.us') AS is_group,
+          m.text AS last_message_text,
+          m.timestamp AS last_message_timestamp,
+          (NOT m.from_me) AS needs_reply
+        FROM (
+          SELECT DISTINCT ON (chat_jid) chat_jid, text, timestamp, from_me, account_jid
+          FROM messages
+          WHERE chat_jid NOT LIKE '%@newsletter'
+            AND chat_jid NOT LIKE '%@lid'
+            AND account_jid = $1
+          ORDER BY chat_jid, timestamp DESC
+          LIMIT 50
+        ) m
+        LEFT JOIN contacts c ON m.chat_jid = c.jid AND m.account_jid = c.account_jid
+        ORDER BY 
+          m.timestamp DESC;
+      `;
+      result = await supabase.query(fallbackQuery, params);
+    }
+
     return result.rows.map(row => {
       let finalName = row.db_name;
       const canonical = getCanonicalJid(row.jid);
@@ -136,14 +164,18 @@ async function getChats(accountJid, limitHours = 12) {
 }
 
 /**
- * Get recent messages for a specific chat, scoped to account_jid
+ * Get recent messages for a specific chat, scoped strictly to account_jid.
+ * Supports limit and optional hours filter (default: last 6 hours or up to limit messages).
  */
-async function getChatMessages(chatJid, limit = 50, accountJid) {
-  const params = [chatJid, limit];
-  let accountFilter = '';
-  if (accountJid) {
-    params.push(accountJid);
-    accountFilter = `AND account_jid = $${params.length}`;
+async function getChatMessages(chatJid, limit = 50, accountJid, hours = null) {
+  if (!accountJid || !chatJid) return [];
+
+  const canonicalJid = getCanonicalJid(chatJid);
+  const params = [canonicalJid, accountJid, limit];
+
+  let timeFilter = '';
+  if (hours && parseInt(hours, 10) > 0) {
+    timeFilter = `AND timestamp >= NOW() - INTERVAL '${parseInt(hours, 10)} hours'`;
   }
 
   const query = `
@@ -159,13 +191,37 @@ async function getChatMessages(chatJid, limit = 50, accountJid) {
       whatsapp_message_id
     FROM messages
     WHERE chat_jid = $1
-      ${accountFilter}
+      AND account_jid = $2
+      ${timeFilter}
     ORDER BY timestamp DESC
-    LIMIT $2;
+    LIMIT $3;
   `;
 
   try {
-    const result = await supabase.query(query, params);
+    let result = await supabase.query(query, params);
+
+    // If hours filter was applied and returned 0 messages, fetch the latest messages up to limit
+    if (result.rows.length === 0 && timeFilter) {
+      const fallbackQuery = `
+        SELECT 
+          id,
+          chat_jid,
+          sender_jid,
+          from_me,
+          text,
+          message_type,
+          has_media,
+          timestamp,
+          whatsapp_message_id
+        FROM messages
+        WHERE chat_jid = $1
+          AND account_jid = $2
+        ORDER BY timestamp DESC
+        LIMIT $3;
+      `;
+      result = await supabase.query(fallbackQuery, params);
+    }
+
     return result.rows.reverse();
   } catch (error) {
     console.error('[MessageService] Error fetching chat messages:', error.message);
@@ -176,8 +232,11 @@ async function getChatMessages(chatJid, limit = 50, accountJid) {
 /**
  * Get recent messages thread history for AI context
  */
-async function getRecentThreadHistory(chatJid, limit = 10, beforeMessageId = null, accountJid = 'default_user') {
-  const params = [chatJid, accountJid];
+async function getRecentThreadHistory(chatJid, limit = 10, beforeMessageId = null, accountJid) {
+  if (!accountJid || !chatJid) return [];
+
+  const canonicalJid = getCanonicalJid(chatJid);
+  const params = [canonicalJid, accountJid];
   let beforeFilter = '';
   if (beforeMessageId) {
     params.push(beforeMessageId);
@@ -198,7 +257,7 @@ async function getRecentThreadHistory(chatJid, limit = 10, beforeMessageId = nul
       timestamp
     FROM messages
     WHERE chat_jid = $1
-      AND (account_jid = $2 OR account_jid = 'default_user')
+      AND account_jid = $2
       ${beforeFilter}
       AND text IS NOT NULL
       AND TRIM(text) != ''

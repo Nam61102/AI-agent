@@ -9,7 +9,7 @@ router.get('/', async (req, res) => {
   try {
     const accountJid = req.accountJid;
     const { rows: contacts } = await pool.query(
-      'SELECT jid, name, profile_data FROM contacts WHERE profile_data IS NOT NULL AND (account_jid = $1 OR account_jid = \'default_user\')',
+      'SELECT jid, name, profile_data FROM contacts WHERE profile_data IS NOT NULL AND account_jid = $1',
       [accountJid]
     );
     

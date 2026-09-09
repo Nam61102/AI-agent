@@ -1,5 +1,6 @@
 const OpenAI = require('openai');
 const { EXTRACTION_PROMPT } = require('./extraction.prompt');
+const { getGeminiChatCompletion } = require('../services/gemini.service');
 require('dotenv').config();
 
 // Determine which AI provider to use
@@ -13,16 +14,11 @@ if (process.env.GROQ_API_KEY) {
     apiKey: process.env.GROQ_API_KEY,
     baseURL: 'https://api.groq.com/openai/v1',
   });
-  primaryModel = process.env.AI_MODEL || 'openai/gpt-oss-120b';
-  // List of active candidate models in priority order
+  primaryModel = process.env.AI_MODEL || 'llama-3.3-70b-versatile';
   const groqCandidateModels = [
     primaryModel,
-    'openai/gpt-oss-120b',
-    'openai/gpt-oss-20b',
-    'groq/compound',
-    'groq/compound-mini',
-    'qwen/qwen3.8-27b',
-    'qwen/qwen3.6-27b'
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant'
   ];
   fallbackModels = [...new Set(groqCandidateModels.filter(Boolean))];
 } else if (process.env.OPENAI_API_KEY) {
@@ -41,6 +37,20 @@ class ExtractionService {
    * @returns {Promise<{success: boolean, data?: Object, isRateLimited?: boolean, error?: string}>}
    */
   async processMessage(text, timestamp) {
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const prompt = `Message Timestamp: ${timestamp}\n\nMessage Content: ${text}`;
+        const response = await getGeminiChatCompletion(prompt, EXTRACTION_PROMPT);
+        const content = response.choices?.[0]?.message?.content;
+        if (content) {
+          const parsed = JSON.parse(content);
+          return { success: true, data: parsed };
+        }
+      } catch (err) {
+        console.warn('[AI] Gemini extraction failed, trying other providers:', err.message);
+      }
+    }
+
     if (!openai) {
       console.warn('[AI] API key not configured. Skipping extraction.');
       return { success: false, error: 'API key not configured' };

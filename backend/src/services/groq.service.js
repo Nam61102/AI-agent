@@ -8,7 +8,7 @@ const client = process.env.GROQ_API_KEY
     })
   : null;
 
-async function getGroqChatCompletion(messages, model = 'openai/gpt-oss-20b') {
+async function getGroqChatCompletion(messages, model = 'llama-3.3-70b-versatile') {
   if (!client) {
     throw new Error('GROQ_API_KEY is not configured');
   }

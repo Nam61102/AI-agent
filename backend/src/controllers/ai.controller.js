@@ -25,9 +25,16 @@ async function suggestReply(req, res) {
     });
 
     if (!result.success) {
+      const lowerText = (text || '').toLowerCase();
+      const isMarathi = /ho|bhetu|kay|kasa|kuth|kiti|bhava|nakki/i.test(lowerText);
+      const isHinglish = /bhai|kya|haan|chal|aur|bata/i.test(lowerText);
       const fallbackReply = /birthday/i.test(text)
-        ? 'Happy Birthday! I hope you have a wonderful day. Let me know how you would like to celebrate.'
-        : `Thanks for sharing this. I will get back to you shortly.`;
+        ? 'Happy Birthday! Wishing you a great day ahead! 🎂'
+        : isMarathi
+        ? 'हो नक्की, मी बघतो.'
+        : isHinglish
+        ? 'Haan dekhta hu abhi.'
+        : 'Got it, looking into this right away.';
       console.warn('[AIController] Reply generation unavailable, using fallback:', result.error);
       return res.json({ success: true, data: { suggested_reply: fallbackReply, aiGenerated: false } });
     }
@@ -43,15 +50,8 @@ async function getActions(req, res) {
     const { status = 'active', limit = 50 } = req.query;
     const accountJid = req.accountJid;
 
-    // Auto-dismiss active actions if the underlying message is older than 24 hours
-    if (status === 'active') {
-      await supabase.query(`
-        UPDATE ai_actions 
-        SET status = 'dismissed' 
-        WHERE status = 'active' AND account_jid = $1 AND source_message_id IN (
-          SELECT id FROM messages WHERE timestamp < NOW() - INTERVAL '24 hours' AND account_jid = $1
-        )
-      `, [accountJid]);
+    if (!accountJid) {
+      return res.status(200).json({ success: true, actions: [] });
     }
 
     const query = `

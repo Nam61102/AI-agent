@@ -8,6 +8,7 @@ const QRCode = require('qrcode');
 const auth = require('./whatsapp.auth');
 const events = require('./whatsapp.events');
 const contactService = require('../services/contact.service');
+const accountCleanupService = require('../services/account-cleanup.service');
 const { getCanonicalJid, formatPhoneNumber } = require('./whatsapp.utils');
 
 class WhatsAppSessionInstance {
@@ -254,11 +255,22 @@ class WhatsAppSessionInstance {
 
           if (isLoggedOut) {
             console.log(`[WhatsAppSession:${this.sessionId}] Logged out by WhatsApp`);
+            const accountJid = this.connectedJid || auth.getSessionOwner(this.sessionId);
+
             auth.clearSession(this.sessionId);
             this.latestQr = null;
             this.latestPairingCode = null;
             this.socket = null;
             this.connectedJid = null;
+            this.realtimeChats.clear();
+            this.realtimeMessages.clear();
+            this.contactNames.clear();
+
+            if (accountJid) {
+              accountCleanupService.wipeAccountData(accountJid).catch(err => {
+                console.error(`[WhatsAppSession:${this.sessionId}] Error wiping account data on logout:`, err.message);
+              });
+            }
             
             this.updateStatus('LOGGED_OUT');
             this.emit('whatsapp:logged_out', { status: 'logged_out' });
@@ -410,17 +422,13 @@ class WhatsAppSessionInstance {
     this.connectedJid = null;
     this.updateStatus('NOT_CONNECTED');
 
-    // Wipe only this specific account's data
+    // Wipe only this specific account's data completely from database
     if (accountJid) {
       try {
-        const supabase = require('../config/supabase');
-        await supabase.query('DELETE FROM ai_actions WHERE account_jid = $1', [accountJid]);
-        await supabase.query('DELETE FROM suggested_replies WHERE account_jid = $1', [accountJid]);
-        await supabase.query('DELETE FROM extractions WHERE account_jid = $1', [accountJid]);
-        await supabase.query('DELETE FROM messages WHERE account_jid = $1', [accountJid]);
-        await supabase.query('DELETE FROM contacts WHERE account_jid = $1', [accountJid]);
-        console.log(`[WhatsAppSession:${this.sessionId}] Data wiped for account ${accountJid}`);
-      } catch (e) {}
+        await accountCleanupService.wipeAccountData(accountJid);
+      } catch (e) {
+        console.error(`[WhatsAppSession:${this.sessionId}] Error wiping account data on disconnect:`, e.message);
+      }
     }
   }
 
@@ -536,21 +544,51 @@ class WhatsAppSessionManager {
   }
 
   async initOnStartup() {
-    console.log('[WhatsAppSessionManager] Initialized multi-session manager.');
-    // Check if any existing sessions on disk should be auto-restored
+    console.log('[WhatsAppSessionManager] Initializing multi-session manager.');
     const fs = require('fs');
     const path = require('path');
     const baseAuthDir = path.resolve(__dirname, '../../.data/whatsapp-auth');
+
     if (fs.existsSync(baseAuthDir)) {
       const dirs = fs.readdirSync(baseAuthDir);
+      const restoredOwners = new Set();
+
       for (const d of dirs) {
-        if (d.startsWith('session_')) {
+        if (d.startsWith('session_') && !d.endsWith('.json')) {
           const sId = d.replace('session_', '');
-          console.log(`[WhatsAppSessionManager] Auto-restoring session: ${sId}`);
-          this.getSession(sId);
+          const ownerJid = auth.getSessionOwner(sId);
+
+          if (ownerJid && restoredOwners.has(ownerJid)) {
+            console.log(`[WhatsAppSessionManager] Skipping duplicate session connection [${sId}] for owner [${ownerJid}]`);
+            continue;
+          }
+
+          if (auth.sessionExists(sId)) {
+            console.log(`[WhatsAppSessionManager] Auto-restoring session: ${sId}`);
+            const sess = this.getSession(sId);
+            if (ownerJid) restoredOwners.add(ownerJid);
+            
+            sess.connect().catch(e => {
+              console.warn(`[WhatsAppSessionManager] Auto-restore connect error for [${sId}]:`, e.message);
+            });
+          }
         }
       }
     }
+  }
+
+  getConnectedJid(sessionId = 'default') {
+    const sess = this.sessions.get(sessionId);
+    return sess?.connectedJid || auth.getSessionOwner(sessionId) || null;
+  }
+
+  getAnyConnectedJid() {
+    for (const sess of this.sessions.values()) {
+      if (sess.connectedJid && sess.status === 'CONNECTED') {
+        return sess.connectedJid;
+      }
+    }
+    return null;
   }
 
   // Backward compatibility convenience methods mapping to sessionId

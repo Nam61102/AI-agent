@@ -106,19 +106,19 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({
 
     const unsubscribe = whatsappService.subscribe({
       onRealtimeChats: (realtimeChats) => {
-        const sixHoursAgo = Date.now() - (6 * 60 * 60 * 1000);
-        const recentChats = realtimeChats.filter((c: any) => {
-          if (!c.last_message_text || c.last_message_text === 'Tap to start chat' || c.last_message_text.trim() === '') return false;
-          const msgTime = new Date(c.last_message_timestamp).getTime();
-          return msgTime >= sixHoursAgo;
+        if (!realtimeChats || !Array.isArray(realtimeChats)) return;
+        const validChats = realtimeChats.filter((c: any) => {
+          return c.last_message_text && c.last_message_text !== 'Tap to start chat' && c.last_message_text.trim() !== '';
         });
-        setChats(formatChats(recentChats));
+        if (validChats.length > 0) {
+          setChats(formatChats(validChats));
+        }
         setLoadingChats(false);
 
         // Auto-refresh active chat in real-time when new messages arrive
         if (activeChatRef.current) {
           const activeBase = activeChatRef.current.jid.split('@')[0].split(':')[0];
-          const hasUpdate = recentChats.some((c: any) => c.jid.split('@')[0].split(':')[0] === activeBase);
+          const hasUpdate = validChats.some((c: any) => c.jid.split('@')[0].split(':')[0] === activeBase);
           if (hasUpdate) {
             whatsappService.requestChatMessages(activeChatRef.current.jid);
           }
@@ -188,6 +188,7 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({
 
   useEffect(() => {
     if (activeChat) {
+      setMessages([]);
       whatsappService.requestChatMessages(activeChat.jid);
     }
   }, [activeChat]);
