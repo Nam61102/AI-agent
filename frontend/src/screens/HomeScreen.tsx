@@ -273,14 +273,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </View>
         </View>
 
-                <View style={styles.headerRightActions}>
-          <TouchableOpacity
-            style={styles.notifBtn}
-            onPress={onNavigatePeople}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.notifIcon}>👥</Text>
-          </TouchableOpacity>
+        <View style={styles.headerRightActions}>
           <TouchableOpacity
             style={[styles.connectionStatusPill, isConnected ? styles.pillOnline : styles.pillOffline]}
             onPress={onConnect}
@@ -549,6 +542,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <TouchableOpacity style={styles.bottomNavItem} activeOpacity={0.8}>
           <Text style={[styles.bottomNavIcon, styles.bottomNavIconActive]}>⚡</Text>
           <Text style={[styles.bottomNavLabel, styles.bottomNavLabelActive]}>Dashboard</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigatePeople} activeOpacity={0.8}>
+          <Text style={styles.bottomNavIcon}>👥</Text>
+          <Text style={styles.bottomNavLabel}>People</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.bottomNavItem} onPress={onActions} activeOpacity={0.8}>

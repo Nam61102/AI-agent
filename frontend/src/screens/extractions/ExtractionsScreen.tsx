@@ -14,6 +14,7 @@ import { theme } from '../../theme';
 interface ExtractionsScreenProps {
   onBackPress?: () => void;
   onNavigateHome?: () => void;
+  onNavigatePeople?: () => void;
   onNavigateSettings?: () => void;
   onOpenChat?: (jid?: string, messageText?: string) => void;
 }
@@ -21,6 +22,7 @@ interface ExtractionsScreenProps {
 export const ExtractionsScreen: React.FC<ExtractionsScreenProps> = ({ 
   onBackPress, 
   onNavigateHome,
+  onNavigatePeople,
   onNavigateSettings,
   onOpenChat 
 }) => {
@@ -128,6 +130,11 @@ export const ExtractionsScreen: React.FC<ExtractionsScreenProps> = ({
         <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigateHome || onBackPress} activeOpacity={0.8}>
           <Text style={styles.bottomNavIcon}>⚡</Text>
           <Text style={styles.bottomNavLabel}>Dashboard</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigatePeople} activeOpacity={0.8}>
+          <Text style={[styles.bottomNavIcon, styles.bottomNavIconActive]}>👥</Text>
+          <Text style={[styles.bottomNavLabel, styles.bottomNavLabelActive]}>People</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.bottomNavItem} activeOpacity={0.8}>

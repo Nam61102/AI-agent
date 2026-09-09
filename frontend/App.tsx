@@ -39,6 +39,7 @@ export default function App() {
           onNavigateToQR={() => setCurrentScreen('QR_SCREEN')}
           onNavigateToChats={() => setCurrentScreen('CHAT_SCREEN')}
           onNavigateToExtractions={() => setCurrentScreen('EXTRACTIONS_SCREEN')}
+          onNavigatePeople={() => setCurrentScreen('PEOPLE_SCREEN')}
           onNavigateHome={() => setCurrentScreen('HOME_SCREEN')}
           onBackPress={() => setCurrentScreen('HOME_SCREEN')}
         />
@@ -60,11 +61,18 @@ export default function App() {
         <ExtractionsScreen 
           onBackPress={() => setCurrentScreen('HOME_SCREEN')}
           onNavigateHome={() => setCurrentScreen('HOME_SCREEN')}
+          onNavigatePeople={() => setCurrentScreen('PEOPLE_SCREEN')}
           onNavigateSettings={() => setCurrentScreen('CONNECTION_SCREEN')}
           onOpenChat={handleOpenChat}
         />
       ) : (
-        <PeopleScreen onBackPress={() => setCurrentScreen('HOME_SCREEN')} />
+        <PeopleScreen 
+          onBackPress={() => setCurrentScreen('HOME_SCREEN')}
+          onNavigateHome={() => setCurrentScreen('HOME_SCREEN')}
+          onNavigatePeople={() => setCurrentScreen('PEOPLE_SCREEN')}
+          onNavigateExtractions={() => setCurrentScreen('EXTRACTIONS_SCREEN')}
+          onNavigateConnection={() => setCurrentScreen('CONNECTION_SCREEN')}
+        />
       )}
     </View>
   );

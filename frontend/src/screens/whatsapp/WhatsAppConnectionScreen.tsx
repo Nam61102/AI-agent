@@ -20,6 +20,7 @@ interface WhatsAppConnectionScreenProps {
   onNavigateToQR: () => void;
   onNavigateToChats?: () => void;
   onNavigateToExtractions?: () => void;
+  onNavigatePeople?: () => void;
   onNavigateHome?: () => void;
   onBackPress?: () => void;
 }
@@ -28,6 +29,7 @@ export const WhatsAppConnectionScreen: React.FC<WhatsAppConnectionScreenProps> =
   onNavigateToQR,
   onNavigateToChats,
   onNavigateToExtractions,
+  onNavigatePeople,
   onNavigateHome,
   onBackPress
 }) => {
@@ -126,6 +128,11 @@ export const WhatsAppConnectionScreen: React.FC<WhatsAppConnectionScreenProps> =
         <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigateHome || onBackPress} activeOpacity={0.8}>
           <Text style={styles.bottomNavIcon}>⚡</Text>
           <Text style={styles.bottomNavLabel}>Dashboard</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigatePeople} activeOpacity={0.8}>
+          <Text style={styles.bottomNavIcon}>👥</Text>
+          <Text style={styles.bottomNavLabel}>People</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.bottomNavItem} onPress={onNavigateToExtractions} activeOpacity={0.8}>
