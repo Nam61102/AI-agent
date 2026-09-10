@@ -6,6 +6,7 @@ const sessionMiddleware = require('../middleware/session.middleware');
 router.use(sessionMiddleware);
 
 router.get('/actions', controller.getActions);
+router.get('/intelligence', controller.getIntelligence);
 router.get('/actions/:id', controller.getActionById);
 router.patch('/actions/:id/dismiss', controller.dismissAction);
 router.get('/summary', controller.getDashboardSummary);

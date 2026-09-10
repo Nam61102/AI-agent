@@ -1,13 +1,23 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const { PROFILE_PROMPT } = require('./profile.prompt');
 require('dotenv').config();
 
-let genAI = null;
-if (process.env.GEMINI_API_KEY) {
-  genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+let openai = null;
+const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
+
+if (apiKey) {
+  openai = new OpenAI({
+    apiKey: apiKey,
+    baseURL: process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : undefined,
+    defaultHeaders: process.env.OPENROUTER_API_KEY ? {
+      'HTTP-Referer': 'https://nryn.ai',
+      'X-Title': 'NRYN AI Assistant'
+    } : undefined
+  });
 }
 
-// Keep the old prompt but add the new fields the user requested
+const primaryModel = process.env.AI_MODEL || 'google/gemini-2.5-flash';
+
 const GEMINI_SYSTEM_PROMPT = `
 You are an AI assistant that strictly analyzes chat histories for explicitly stated preferences.
 CRITICAL RULES FOR EXTRACTION:
@@ -30,14 +40,12 @@ Extract the following information and return ONLY a JSON object:
 
 class ProfileService {
   async analyzeProfileInChunks(messages) {
-    if (!genAI) {
-      console.warn('[ProfileService] GEMINI_API_KEY not configured.');
+    if (!openai) {
+      console.warn('[ProfileService] AI API key not configured.');
       return { success: false, error: 'API key not configured' };
     }
 
-    // With Gemini 1.5 Flash we don't need small chunks! 
-    // We can send the entire message history at once.
-    console.log(`[ProfileService] Analyzing all ${messages.length} messages using Gemini 1.5 Flash...`);
+    console.log(`[ProfileService] Analyzing all ${messages.length} messages using ${primaryModel}...`);
 
     const formattedHistory = messages
       .map(m => `[${new Date(m.timestamp).toLocaleDateString()} ${new Date(m.timestamp).toLocaleTimeString()}] ${m.from_me ? 'You' : 'Contact'}: ${m.text}`)
@@ -46,21 +54,21 @@ class ProfileService {
     const prompt = `${GEMINI_SYSTEM_PROMPT}\n\nChat History:\n${formattedHistory}`;
 
     try {
-      const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.3,
-        }
+      const response = await openai.chat.completions.create({
+        model: primaryModel,
+        messages: [
+          { role: 'system', content: 'You are an AI assistant that strictly outputs JSON.' },
+          { role: 'user', content: prompt }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3
       });
-      
-      const responseText = result.response.text();
+
+      const responseText = response.choices[0]?.message?.content;
       const parsed = JSON.parse(responseText);
-      
-      // Ensure all arrays exist
-      return { 
-        success: true, 
+
+      return {
+        success: true,
         data: {
           likes: parsed.likes || [],
           dislikes: parsed.dislikes || [],
@@ -72,17 +80,17 @@ class ProfileService {
         }
       };
     } catch (err) {
-      console.error('[ProfileService] Gemini Analysis failed:', err.message);
+      console.error('[ProfileService] Analysis failed:', err.message);
       return { success: false, error: err.message };
     }
   }
 
   async extractHistoryInChunks(messages) {
-    if (!genAI) {
+    if (!openai) {
       return { success: false, error: 'API key not configured' };
     }
 
-    console.log(`[ProfileService] Extracting actions from ${messages.length} messages using Gemini 1.5 Flash...`);
+    console.log(`[ProfileService] Extracting actions from ${messages.length} messages using ${primaryModel}...`);
 
     const formattedHistory = messages
       .map(m => `[${new Date(m.timestamp).toLocaleDateString()} ${new Date(m.timestamp).toLocaleTimeString()}] ${m.from_me ? 'You' : 'Contact'}: ${m.text}`)
@@ -96,19 +104,20 @@ Chat History:
 ${formattedHistory}`;
 
     try {
-      const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.3,
-        }
+      const response = await openai.chat.completions.create({
+        model: primaryModel,
+        messages: [
+          { role: 'system', content: 'You are an AI assistant that strictly outputs JSON.' },
+          { role: 'user', content: prompt }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3
       });
-      
-      const parsed = JSON.parse(result.response.text());
+
+      const parsed = JSON.parse(response.choices[0]?.message?.content);
       return { success: true, data: parsed.extractions || [] };
     } catch (err) {
-      console.error('[ProfileService] Gemini Extraction failed:', err.message);
+      console.error('[ProfileService] Extraction failed:', err.message);
       return { success: false, error: err.message };
     }
   }

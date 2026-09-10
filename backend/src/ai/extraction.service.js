@@ -1,26 +1,36 @@
 const OpenAI = require('openai');
 const { EXTRACTION_PROMPT } = require('./extraction.prompt');
-const { getGeminiChatCompletion } = require('../services/gemini.service');
 require('dotenv').config();
 
 // Determine which AI provider to use
 let openai = null;
-let primaryModel = process.env.AI_MODEL || 'gpt-4o-mini';
-let fallbackModels = [primaryModel];
+let primaryModel = process.env.AI_MODEL || 'google/gemini-2.5-flash';
+let fallbackModels = [primaryModel, 'google/gemini-2.5-flash-lite', 'google/gemini-2.5-pro'];
 
-if (process.env.GROQ_API_KEY) {
-  // Use Groq's OpenAI-compatible endpoint
+if (process.env.OPENROUTER_API_KEY) {
+  openai = new OpenAI({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: 'https://openrouter.ai/api/v1',
+    defaultHeaders: {
+      'HTTP-Referer': 'https://nryn.ai',
+      'X-Title': 'NRYN AI Assistant'
+    }
+  });
+  primaryModel = process.env.AI_MODEL || 'google/gemini-2.5-flash';
+  const candidateModels = [
+    primaryModel,
+    'google/gemini-2.5-flash',
+    'google/gemini-2.5-flash-lite',
+    'google/gemini-2.5-pro'
+  ];
+  fallbackModels = [...new Set(candidateModels.filter(Boolean))];
+} else if (process.env.GROQ_API_KEY) {
   openai = new OpenAI({
     apiKey: process.env.GROQ_API_KEY,
     baseURL: 'https://api.groq.com/openai/v1',
   });
-  primaryModel = process.env.AI_MODEL || 'llama-3.3-70b-versatile';
-  const groqCandidateModels = [
-    primaryModel,
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant'
-  ];
-  fallbackModels = [...new Set(groqCandidateModels.filter(Boolean))];
+  primaryModel = process.env.AI_MODEL || 'openai/gpt-oss-120b';
+  fallbackModels = [primaryModel, 'openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
 } else if (process.env.OPENAI_API_KEY) {
   openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -37,20 +47,6 @@ class ExtractionService {
    * @returns {Promise<{success: boolean, data?: Object, isRateLimited?: boolean, error?: string}>}
    */
   async processMessage(text, timestamp) {
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const prompt = `Message Timestamp: ${timestamp}\n\nMessage Content: ${text}`;
-        const response = await getGeminiChatCompletion(prompt, EXTRACTION_PROMPT);
-        const content = response.choices?.[0]?.message?.content;
-        if (content) {
-          const parsed = JSON.parse(content);
-          return { success: true, data: parsed };
-        }
-      } catch (err) {
-        console.warn('[AI] Gemini extraction failed, trying other providers:', err.message);
-      }
-    }
-
     if (!openai) {
       console.warn('[AI] API key not configured. Skipping extraction.');
       return { success: false, error: 'API key not configured' };
@@ -112,25 +108,30 @@ class ExtractionService {
     if (!rawExtraction || typeof rawExtraction !== 'object') return null;
     if (rawExtraction.is_relevant !== true) return null;
 
-    const type = rawExtraction.type;
-    const confidence = parseFloat(rawExtraction.confidence) || 0;
-    const payload = rawExtraction.payload;
+    const category = rawExtraction.category || (rawExtraction.type === 'life_event' ? 'important_event' : 'needs_action');
+    const subtype = rawExtraction.subtype || rawExtraction.type || 'general';
+    const confidence = parseFloat(rawExtraction.confidence) || 0.9;
+    
+    // Aggressive filtering: Discard low confidence extractions
+    if (confidence < 0.70) return null;
 
-    if (!type || !payload) return null;
-
-    // Aggressive filtering: Discard any extraction with low confidence completely
-    if (confidence < 0.90) return null;
-
-    const status = confidence >= 0.95 ? 'active' : 'needs_review';
+    const whatMatters = rawExtraction.what_matters || rawExtraction.payload?.description || rawExtraction.payload?.title || 'Important update detected';
+    const whyItMatters = rawExtraction.why_it_matters || rawExtraction.payload?.description || 'Requires attention';
+    const recommendedAction = rawExtraction.recommended_action || 'Review and take action if needed';
+    const suggestedReply = rawExtraction.suggested_reply || null;
 
     return {
-      type,
+      category,
+      subtype,
       confidence,
-      status,
-      payload
+      status: 'active',
+      whatMatters,
+      whyItMatters,
+      recommendedAction,
+      suggestedReply,
+      payload: rawExtraction.payload || { description: whatMatters }
     };
   }
 }
 
 module.exports = new ExtractionService();
-

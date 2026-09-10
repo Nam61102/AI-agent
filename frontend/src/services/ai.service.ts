@@ -4,8 +4,13 @@ const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string || 'http://loc
 
 export interface AIAction {
   id: number;
-  type: 'reply_needed' | 'follow_up' | 'birthday';
+  category?: 'needs_action' | 'important_event' | 'relationship_insight' | 'ai_auto_reply';
+  subtype?: string;
+  type: string;
   title: string;
+  whatMatters?: string;
+  whyItMatters?: string;
+  recommendedAction?: string;
   description?: string;
   status: string;
   priority?: number;
@@ -27,6 +32,18 @@ export interface AIAction {
     reason?: string;
     tone?: string;
   };
+}
+
+export interface IntelligenceResponse {
+  success: boolean;
+  categories: {
+    needs_action: AIAction[];
+    important_event: AIAction[];
+    relationship_insight: AIAction[];
+    ai_auto_reply: AIAction[];
+  };
+  totalCount: number;
+  items: AIAction[];
 }
 
 export interface DashboardSummary {
@@ -113,6 +130,22 @@ class AIService {
     } catch (error) {
       console.error('[AIService] Error analyzing active chats:', error);
       return [];
+    }
+  }
+
+  async getIntelligence(status = 'active'): Promise<IntelligenceResponse | null> {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/ai/intelligence?status=${status}`, {
+        headers: getAuthHeaders()
+      });
+      const data = await response.json();
+      if (data.success) {
+        return data;
+      }
+      return null;
+    } catch (error) {
+      console.error('[AIService] Error fetching intelligence:', error);
+      return null;
     }
   }
 

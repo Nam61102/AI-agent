@@ -1,67 +1,38 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 require('dotenv').config();
 
-let genAI = null;
-if (process.env.GEMINI_API_KEY) {
-  genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+let client = null;
+const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY;
+
+if (apiKey) {
+  client = new OpenAI({
+    apiKey: apiKey,
+    baseURL: 'https://openrouter.ai/api/v1',
+    defaultHeaders: {
+      'HTTP-Referer': 'https://nryn.ai',
+      'X-Title': 'NRYN AI Assistant'
+    }
+  });
 }
 
-const CANDIDATE_MODELS = [
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-flash-latest',
-  'gemini-3.6-flash'
-];
-
-async function getGeminiChatCompletion(prompt, systemInstruction = 'You are an intelligent WhatsApp AI Assistant. Return valid JSON only.') {
-  if (!genAI) {
-    throw new Error('GEMINI_API_KEY is not configured');
+async function getGeminiChatCompletion(prompt, systemInstruction = 'You are a helpful AI. Return ONLY JSON.') {
+  if (!client) {
+    throw new Error('OPENROUTER_API_KEY is not configured');
   }
 
-  let lastError = null;
+  const model = process.env.AI_MODEL || 'google/gemini-2.5-flash';
 
-  for (const modelName of CANDIDATE_MODELS) {
-    try {
-      const model = genAI.getGenerativeModel({ 
-        model: modelName,
-        systemInstruction
-      });
+  const response = await client.chat.completions.create({
+    model: model,
+    messages: [
+      { role: 'system', content: systemInstruction },
+      { role: 'user', content: prompt }
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.3
+  });
 
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.3,
-        }
-      });
-
-      const text = result.response.text();
-      if (text) {
-        return {
-          choices: [
-            { message: { content: text } }
-          ]
-        };
-      }
-    } catch (err) {
-      lastError = err;
-      const isRateOrQuota = err.message && (
-        err.message.includes('429') || 
-        err.message.includes('503') || 
-        err.message.includes('Quota exceeded') || 
-        err.message.includes('Too Many Requests') ||
-        err.message.includes('high demand')
-      );
-      if (isRateOrQuota) {
-        console.warn(`[GeminiService] Model '${modelName}' busy/quota hit (${err.message.slice(0, 80)}...). Trying next model...`);
-      } else {
-        console.warn(`[GeminiService] Model '${modelName}' error: ${err.message}. Trying next model...`);
-      }
-    }
-  }
-
-  throw new Error(`Gemini completion failed across all candidate models. Last error: ${lastError?.message}`);
+  return response;
 }
 
 module.exports = { getGeminiChatCompletion };

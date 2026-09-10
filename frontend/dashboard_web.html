@@ -37,58 +37,47 @@
 
     <!-- Main Content -->
     <main class="main-content">
-      <div class="dashboard-grid">
-        <!-- Overview Card -->
-        <div class="card overview-card">
-          <div class="card-header">
-            <h2>Integration Status</h2>
-            <span class="badge">Read-Only Mode</span>
-          </div>
-          <div class="card-body">
-            <p class="description">
-              NRYN is configured to ingest incoming WhatsApp messages and automatically sync contacts to your Supabase database.
-            </p>
-            <div class="metrics-grid">
-              <div class="metric-box">
-                <span class="metric-label">Connection</span>
-                <span id="metric-conn-status" class="metric-value">Disconnected</span>
-              </div>
-              <div class="metric-box">
-                <span class="metric-label">Data Storage</span>
-                <span class="metric-value green">Supabase Connected</span>
-              </div>
-              <div class="metric-box">
-                <span class="metric-label">Mode</span>
-                <span class="metric-value blue">WhatsApp Ingestion</span>
-              </div>
-            </div>
-          </div>
+      <!-- Intelligence Banner -->
+      <div class="intelligence-header-banner">
+        <div class="intelligence-banner-info">
+          <h2>✨ NRYN AI Intelligence Dashboard</h2>
+          <p>Continuous WhatsApp background analysis • 90% Noise Filter Active (No casual chatter, greetings, or filler)</p>
         </div>
+        <button id="btn-reanalyze-chats" class="btn btn-secondary">
+          ✨ Re-Analyze WhatsApp
+        </button>
+      </div>
 
-        <!-- Connection Management Card -->
-        <div class="card action-card">
-          <div class="card-header">
-            <h2>WhatsApp Device Link</h2>
-          </div>
-          <div class="card-body">
-            <div id="wa-card-info" class="card-info-box">
-              <p>Link your personal WhatsApp account using Baileys multi-device protocol.</p>
-              <ul class="feature-list">
-                <li>✓ Local encrypted session storage</li>
-                <li>✓ Read-only incoming message ingestion</li>
-                <li>✓ Contact auto-indexing in Supabase</li>
-                <li>✓ Zero terminal QR code exposure</li>
-              </ul>
-            </div>
-            <div class="card-actions">
-              <button id="btn-action-primary" class="btn btn-primary btn-lg">
-                Connect WhatsApp
-              </button>
-              <button id="btn-action-disconnect" class="btn btn-danger btn-lg hidden">
-                Disconnect Device
-              </button>
-            </div>
-          </div>
+      <!-- 4 Category Navigation Tabs -->
+      <div class="category-nav-tabs">
+        <button class="cat-tab cat-all active" data-category="all">
+          <span>⚡ All Intelligence</span>
+          <span id="badge-count-all" class="tab-badge">0</span>
+        </button>
+        <button class="cat-tab cat-red" data-category="needs_action">
+          <span>🔴 Needs Action</span>
+          <span id="badge-count-needs_action" class="tab-badge">0</span>
+        </button>
+        <button class="cat-tab cat-yellow" data-category="important_event">
+          <span>🟡 Important Events</span>
+          <span id="badge-count-important_event" class="tab-badge">0</span>
+        </button>
+        <button class="cat-tab cat-green" data-category="relationship_insight">
+          <span>🟢 Relationship Insights</span>
+          <span id="badge-count-relationship_insight" class="tab-badge">0</span>
+        </button>
+        <button class="cat-tab cat-blue" data-category="ai_auto_reply">
+          <span>🔵 AI Auto-Replies</span>
+          <span id="badge-count-ai_auto_reply" class="tab-badge">0</span>
+        </button>
+      </div>
+
+      <!-- Intelligence Items Container -->
+      <div id="intelligence-container" class="intelligence-list">
+        <!-- Rendered dynamically by app.js -->
+        <div class="empty-state-box">
+          <div class="spinner"></div>
+          <p class="state-message">Analyzing WhatsApp Intelligence...</p>
         </div>
       </div>
     </main>

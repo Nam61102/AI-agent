@@ -8,8 +8,7 @@ const QRCode = require('qrcode');
 const auth = require('./whatsapp.auth');
 const events = require('./whatsapp.events');
 const contactService = require('../services/contact.service');
-const accountCleanupService = require('../services/account-cleanup.service');
-const { getCanonicalJid, formatPhoneNumber } = require('./whatsapp.utils');
+const { getCanonicalJid, formatPhoneNumber, registerLidMapping } = require('./whatsapp.utils');
 
 class WhatsAppSessionInstance {
   constructor(sessionId, manager) {
@@ -29,6 +28,14 @@ class WhatsAppSessionInstance {
     this.realtimeChats = new Map(); // canonical_jid -> chat object
     this.realtimeMessages = new Map(); // canonical_jid -> messages array
     this.contactNames = new Map(); // canonical_jid -> name
+    this.rawProtoMessages = new Map(); // message_id -> proto.IMessage
+    this.msgRetryCounterCache = {
+      _map: new Map(),
+      get(key) { return this._map.get(key); },
+      set(key, val) { this._map.set(key, val); },
+      del(key) { this._map.delete(key); },
+      flushAll() { this._map.clear(); }
+    };
   }
 
   emit(event, data) {
@@ -198,7 +205,27 @@ class WhatsAppSessionInstance {
         markOnlineOnConnect: true,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 15000
+        keepAliveIntervalMs: 15000,
+        msgRetryCounterCache: this.msgRetryCounterCache,
+        getMessage: async (key) => {
+          if (!key || !key.id) return undefined;
+          if (this.rawProtoMessages.has(key.id)) {
+            return this.rawProtoMessages.get(key.id);
+          }
+          try {
+            const supabase = require('../config/supabase');
+            const res = await supabase.query(
+              'SELECT text FROM messages WHERE whatsapp_message_id = $1 LIMIT 1',
+              [key.id]
+            );
+            if (res.rows.length > 0 && res.rows[0].text) {
+              const protoMsg = { conversation: res.rows[0].text };
+              this.rawProtoMessages.set(key.id, protoMsg);
+              return protoMsg;
+            }
+          } catch (err) {}
+          return undefined;
+        }
       });
 
       this.socket.ev.on('creds.update', saveCreds);
@@ -244,6 +271,16 @@ class WhatsAppSessionInstance {
 
           auth.saveSessionOwner(this.sessionId, connectedJid);
 
+          // Pre-populate contact names from DB
+          try {
+            const dbContacts = await contactService.getAllContacts(connectedJid);
+            for (const c of dbContacts) {
+              if (c.jid && c.name) {
+                this.contactNames.set(getCanonicalJid(c.jid), c.name);
+              }
+            }
+          } catch (err) {}
+
           this.updateStatus('CONNECTED');
           this.emit('whatsapp:connected', { status: 'connected', user: connectedJid });
         } else if (connection === 'close') {
@@ -255,22 +292,11 @@ class WhatsAppSessionInstance {
 
           if (isLoggedOut) {
             console.log(`[WhatsAppSession:${this.sessionId}] Logged out by WhatsApp`);
-            const accountJid = this.connectedJid || auth.getSessionOwner(this.sessionId);
-
             auth.clearSession(this.sessionId);
             this.latestQr = null;
             this.latestPairingCode = null;
             this.socket = null;
             this.connectedJid = null;
-            this.realtimeChats.clear();
-            this.realtimeMessages.clear();
-            this.contactNames.clear();
-
-            if (accountJid) {
-              accountCleanupService.wipeAccountData(accountJid).catch(err => {
-                console.error(`[WhatsAppSession:${this.sessionId}] Error wiping account data on logout:`, err.message);
-              });
-            }
             
             this.updateStatus('LOGGED_OUT');
             this.emit('whatsapp:logged_out', { status: 'logged_out' });
@@ -282,20 +308,48 @@ class WhatsAppSessionInstance {
         }
       });
 
-      this.socket.ev.on('contacts.upsert', async (contacts) => {
+      const handleContactUpdate = async (contactsList) => {
         const accountJid = this.connectedJid || auth.getSessionOwner(this.sessionId) || 'default_user';
-        for (const c of contacts) {
-          if (c.id && (c.name || c.verifiedName || c.pushname)) {
+        for (const c of contactsList) {
+          if (c.id && c.lid) {
+            registerLidMapping(c.lid, c.id);
+          }
+          if (c.id && (c.name || c.notify || c.verifiedName || c.pushname)) {
             const canonical = getCanonicalJid(c.id);
-            const resolvedName = c.name || c.verifiedName || c.pushname;
-            this.contactNames.set(canonical, resolvedName);
-            
-            try {
-              await contactService.findOrCreateContact({ jid: canonical, name: resolvedName, accountJid });
-            } catch (err) {}
+            const resolvedName = c.name || c.notify || c.verifiedName || c.pushname;
+            const isAddressBook = Boolean(c.name && c.name.trim() !== '');
+            if (resolvedName) {
+              this.contactNames.set(canonical, resolvedName);
+              try {
+                await contactService.findOrCreateContact({ jid: canonical, name: resolvedName, accountJid, isAddressBook });
+              } catch (err) {}
+            }
           }
         }
-      });
+      };
+
+      this.socket.ev.on('contacts.upsert', handleContactUpdate);
+      this.socket.ev.on('contacts.update', handleContactUpdate);
+
+      const handleChatUpdate = async (chatsList) => {
+        const accountJid = this.connectedJid || auth.getSessionOwner(this.sessionId) || 'default_user';
+        for (const chat of chatsList) {
+          if (chat.id && (chat.name || chat.subject)) {
+            const canonical = getCanonicalJid(chat.id);
+            const resolvedName = chat.name || chat.subject;
+            const isAddressBook = Boolean(chat.name && chat.name.trim() !== '');
+            if (resolvedName) {
+              this.contactNames.set(canonical, resolvedName);
+              try {
+                await contactService.findOrCreateContact({ jid: canonical, name: resolvedName, accountJid, isAddressBook });
+              } catch (err) {}
+            }
+          }
+        }
+      };
+
+      this.socket.ev.on('chats.upsert', handleChatUpdate);
+      this.socket.ev.on('chats.update', handleChatUpdate);
 
       this.socket.ev.on('groups.upsert', async (groups) => {
         const accountJid = this.connectedJid || auth.getSessionOwner(this.sessionId) || 'default_user';
@@ -305,7 +359,7 @@ class WhatsAppSessionInstance {
             const resolvedName = group.name || group.subject;
             this.contactNames.set(canonical, resolvedName);
             try {
-              await contactService.findOrCreateContact({ jid: canonical, name: resolvedName, accountJid });
+              await contactService.findOrCreateContact({ jid: canonical, name: resolvedName, accountJid, isAddressBook: true });
             } catch (err) {}
           }
         }
@@ -323,12 +377,16 @@ class WhatsAppSessionInstance {
 
         if (contacts) {
           for (const c of contacts) {
-            if (c.id && (c.name || c.verifiedName || c.pushname)) {
+            if (c.id && c.lid) {
+              registerLidMapping(c.lid, c.id);
+            }
+            if (c.id && (c.name || c.notify || c.verifiedName || c.pushname)) {
               const canonical = getCanonicalJid(c.id);
-              const resolvedName = c.name || c.verifiedName || c.pushname;
+              const resolvedName = c.name || c.notify || c.verifiedName || c.pushname;
+              const isAddressBook = Boolean(c.name && c.name.trim() !== '');
               this.contactNames.set(canonical, resolvedName);
               try {
-                await contactService.findOrCreateContact({ jid: canonical, name: resolvedName, accountJid });
+                await contactService.findOrCreateContact({ jid: canonical, name: resolvedName, accountJid, isAddressBook });
               } catch (err) {}
             }
           }
@@ -337,6 +395,9 @@ class WhatsAppSessionInstance {
         if (messages) {
           for (const msg of messages) {
             if (!msg.message) continue;
+            if (msg.key?.id) {
+              this.rawProtoMessages.set(msg.key.id, msg.message);
+            }
             const jid = msg.key?.remoteJid;
             if (!jid || jid.endsWith('@newsletter')) continue;
 
@@ -359,6 +420,14 @@ class WhatsAppSessionInstance {
         if (!upsert || !upsert.messages) return;
         for (const rawMsg of upsert.messages) {
           try {
+            if (rawMsg.key?.id && rawMsg.message) {
+              this.rawProtoMessages.set(rawMsg.key.id, rawMsg.message);
+              if (this.rawProtoMessages.size > 2000) {
+                const firstKey = this.rawProtoMessages.keys().next().value;
+                this.rawProtoMessages.delete(firstKey);
+              }
+            }
+
             const rawChatJid = rawMsg.key?.remoteJid;
             if (!rawChatJid || rawChatJid === 'status@broadcast' || rawChatJid.endsWith('@newsletter')) continue;
             
@@ -422,13 +491,17 @@ class WhatsAppSessionInstance {
     this.connectedJid = null;
     this.updateStatus('NOT_CONNECTED');
 
-    // Wipe only this specific account's data completely from database
+    // Wipe only this specific account's data
     if (accountJid) {
       try {
-        await accountCleanupService.wipeAccountData(accountJid);
-      } catch (e) {
-        console.error(`[WhatsAppSession:${this.sessionId}] Error wiping account data on disconnect:`, e.message);
-      }
+        const supabase = require('../config/supabase');
+        await supabase.query('DELETE FROM ai_actions WHERE account_jid = $1', [accountJid]);
+        await supabase.query('DELETE FROM suggested_replies WHERE account_jid = $1', [accountJid]);
+        await supabase.query('DELETE FROM extractions WHERE account_jid = $1', [accountJid]);
+        await supabase.query('DELETE FROM messages WHERE account_jid = $1', [accountJid]);
+        await supabase.query('DELETE FROM contacts WHERE account_jid = $1', [accountJid]);
+        console.log(`[WhatsAppSession:${this.sessionId}] Data wiped for account ${accountJid}`);
+      } catch (e) {}
     }
   }
 
@@ -436,11 +509,82 @@ class WhatsAppSessionInstance {
     if (!this.socket || this.status !== 'CONNECTED') {
       throw new Error(`WhatsApp is not connected for session [${this.sessionId}].`);
     }
-    const targetJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
-    const sent = await this.socket.sendMessage(targetJid, { text });
-    
+    let canonicalJid = getCanonicalJid(jid);
+    let targetJid = canonicalJid.endsWith('@g.us') || canonicalJid.endsWith('@newsletter')
+      ? canonicalJid
+      : (canonicalJid.includes('@') ? canonicalJid : `${canonicalJid}@s.whatsapp.net`);
+
+    // Verify and resolve registered WhatsApp user JID via onWhatsApp to guarantee 2-tick delivery
+    if (!targetJid.endsWith('@g.us') && !targetJid.endsWith('@newsletter') && this.socket.onWhatsApp) {
+      try {
+        const numToVerify = targetJid.split('@')[0].split(':')[0];
+        const results = await this.socket.onWhatsApp(numToVerify);
+        if (Array.isArray(results) && results.length > 0) {
+          const match = results.find(r => r.exists && r.jid);
+          if (match && match.jid) {
+            targetJid = match.jid;
+            const verifiedCanonical = getCanonicalJid(match.jid);
+            if (canonicalJid !== verifiedCanonical) {
+              registerLidMapping(canonicalJid, verifiedCanonical);
+              canonicalJid = verifiedCanonical;
+            }
+          }
+        }
+      } catch (onWaErr) {
+        console.warn(`[WhatsAppSession:${this.sessionId}] onWhatsApp resolution warning for ${targetJid}:`, onWaErr.message);
+      }
+    }
+
+    const customMessageId = 'NRYN_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    const rawProto = { conversation: text.trim() };
+
+    // Pre-cache raw proto so getMessage returns it instantly during Signal E2EE retry packets
+    this.rawProtoMessages.set(customMessageId, rawProto);
+    if (this.rawProtoMessages.size > 5000) {
+      const firstKey = this.rawProtoMessages.keys().next().value;
+      this.rawProtoMessages.delete(firstKey);
+    }
+
+    const sent = await this.socket.sendMessage(targetJid, { text: text.trim() }, { messageId: customMessageId });
+    const messageId = sent?.key?.id || customMessageId;
+
+    const accountJid = this.connectedJid || auth.getSessionOwner(this.sessionId) || 'default_user';
+
+    try {
+      const messageService = require('../services/message.service');
+      const contactService = require('../services/contact.service');
+      const contact = await contactService.findContactByJid(canonicalJid, accountJid);
+
+      await messageService.saveMessage({
+        account_jid: accountJid,
+        contact_id: contact?.id || null,
+        chat_jid: canonicalJid,
+        sender_jid: 'me',
+        from_me: true,
+        timestamp: new Date().toISOString(),
+        text: text.trim(),
+        message_type: 'text',
+        has_media: false,
+        whatsapp_message_id: messageId
+      });
+
+      const supabase = require('../config/supabase');
+      await supabase.query(
+        `UPDATE ai_actions SET status = 'dismissed', updated_at = NOW() 
+         WHERE chat_jid = $1 AND account_jid = $2 AND type = 'reply_needed' AND status = 'active'`,
+        [canonicalJid, accountJid]
+      );
+      await supabase.query(
+        `UPDATE suggested_replies SET status = 'sent', updated_at = NOW()
+         WHERE chat_jid = $1 AND account_jid = $2 AND status = 'pending'`,
+        [canonicalJid, accountJid]
+      );
+    } catch (dbErr) {
+      console.warn(`[WhatsAppSession:${this.sessionId}] Error persisting sent message:`, dbErr.message);
+    }
+
     // Track outgoing message locally
-    this.addRealtimeMessage(targetJid, text, Date.now(), true, 'You', sent?.key?.id || String(Date.now()));
+    this.addRealtimeMessage(canonicalJid, text, Date.now(), true, 'You', messageId);
     return sent;
   }
 }
@@ -544,51 +688,22 @@ class WhatsAppSessionManager {
   }
 
   async initOnStartup() {
-    console.log('[WhatsAppSessionManager] Initializing multi-session manager.');
+    console.log('[WhatsAppSessionManager] Initialized multi-session manager.');
+    // Check if any existing sessions on disk should be auto-restored
     const fs = require('fs');
     const path = require('path');
     const baseAuthDir = path.resolve(__dirname, '../../.data/whatsapp-auth');
-
     if (fs.existsSync(baseAuthDir)) {
       const dirs = fs.readdirSync(baseAuthDir);
-      const restoredOwners = new Set();
-
       for (const d of dirs) {
-        if (d.startsWith('session_') && !d.endsWith('.json')) {
+        const fullPath = path.join(baseAuthDir, d);
+        if (d.startsWith('session_') && !d.endsWith('.json') && fs.statSync(fullPath).isDirectory()) {
           const sId = d.replace('session_', '');
-          const ownerJid = auth.getSessionOwner(sId);
-
-          if (ownerJid && restoredOwners.has(ownerJid)) {
-            console.log(`[WhatsAppSessionManager] Skipping duplicate session connection [${sId}] for owner [${ownerJid}]`);
-            continue;
-          }
-
-          if (auth.sessionExists(sId)) {
-            console.log(`[WhatsAppSessionManager] Auto-restoring session: ${sId}`);
-            const sess = this.getSession(sId);
-            if (ownerJid) restoredOwners.add(ownerJid);
-            
-            sess.connect().catch(e => {
-              console.warn(`[WhatsAppSessionManager] Auto-restore connect error for [${sId}]:`, e.message);
-            });
-          }
+          console.log(`[WhatsAppSessionManager] Auto-restoring session: ${sId}`);
+          this.getSession(sId);
         }
       }
     }
-  }
-
-  getConnectedJid(sessionId = 'default') {
-    const sess = this.sessions.get(sessionId);
-    return sess?.connectedJid || auth.getSessionOwner(sessionId) || null;
-  }
-
-  getAnyConnectedJid() {
-    for (const sess of this.sessions.values()) {
-      if (sess.connectedJid && sess.status === 'CONNECTED') {
-        return sess.connectedJid;
-      }
-    }
-    return null;
   }
 
   // Backward compatibility convenience methods mapping to sessionId

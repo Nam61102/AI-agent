@@ -1,22 +1,45 @@
-/**
- * WhatsApp Utilities for JID Canonicalization and Name Resolution
- */
+const lidToJidMap = new Map();
+
+// Known default mappings
+lidToJidMap.set('217256709591222', '917030513050@s.whatsapp.net');
+lidToJidMap.set('217256709591222@lid', '917030513050@s.whatsapp.net');
+
+function registerLidMapping(lid, realJid) {
+  if (!lid || !realJid) return;
+  const cleanedLid = String(lid).replace(/[\s+-]/g, '');
+  const cleanedJid = String(realJid).replace(/[\s+-]/g, '');
+  const lidNum = cleanedLid.split('@')[0].split(':')[0];
+  const realNum = cleanedJid.split('@')[0].split(':')[0];
+  
+  if (lidNum && realNum && lidNum !== realNum && realNum.length >= 10 && realNum.length <= 15) {
+    const canonicalReal = realNum + '@s.whatsapp.net';
+    lidToJidMap.set(lidNum, canonicalReal);
+    lidToJidMap.set(lidNum + '@lid', canonicalReal);
+    lidToJidMap.set(cleanedLid, canonicalReal);
+  }
+}
 
 function getCanonicalJid(jid) {
   if (!jid) return '';
-  let cleaned = jid.replace(/[\s+-]/g, '');
+  let cleaned = String(jid).replace(/[\s+-]/g, '');
   const parts = cleaned.split('@');
   let number = parts[0].split(':')[0]; // Strip device ID (e.g. 1234:2 -> 1234)
   const suffix = parts.length > 1 ? parts[1] : '';
   
-  // Hardcoded map for known LIDs to Phone Numbers based on user feedback
-  if (number === '217256709591222' && suffix === 'lid') {
-    return '917030513050@s.whatsapp.net';
+  if (lidToJidMap.has(cleaned)) {
+    return lidToJidMap.get(cleaned);
+  }
+  if (lidToJidMap.has(number)) {
+    return lidToJidMap.get(number);
+  }
+  if (lidToJidMap.has(number + '@lid')) {
+    return lidToJidMap.get(number + '@lid');
   }
 
-  if (suffix === 'g.us' || suffix === 'newsletter' || suffix === 'lid' || suffix === 'broadcast') {
+  if (suffix === 'g.us' || suffix === 'newsletter' || suffix === 'broadcast') {
     return number + '@' + suffix;
   }
+  
   return number + '@s.whatsapp.net';
 }
 
@@ -36,5 +59,7 @@ function formatPhoneNumber(phoneRaw) {
 
 module.exports = {
   getCanonicalJid,
-  formatPhoneNumber
+  formatPhoneNumber,
+  registerLidMapping,
+  lidToJidMap
 };

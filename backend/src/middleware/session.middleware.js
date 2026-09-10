@@ -2,8 +2,8 @@ const auth = require('../whatsapp/whatsapp.auth');
 
 function sessionMiddleware(req, res, next) {
   // Extract session ID from headers or query parameters
-  const rawSessionId = req.headers['x-session-id'] || req.query.sessionId || req.query.session_id || 'default';
-  req.sessionId = String(rawSessionId).trim();
+  const sessionId = req.headers['x-session-id'] || req.query.sessionId || 'default';
+  req.sessionId = String(sessionId).trim();
 
   // Try to resolve account_jid from active WhatsApp client or persisted session owner
   const whatsappClient = require('../whatsapp/whatsapp.client');
@@ -12,11 +12,7 @@ function sessionMiddleware(req, res, next) {
     : null;
     
   const savedOwner = auth.getSessionOwner(req.sessionId);
-  const anyConnected = typeof whatsappClient.getAnyConnectedJid === 'function'
-    ? whatsappClient.getAnyConnectedJid()
-    : null;
-
-  req.accountJid = activeJid || savedOwner || anyConnected || `session_${req.sessionId}`;
+  req.accountJid = activeJid || savedOwner || (req.sessionId === 'default' ? (auth.getSessionOwner('default') || 'session_default') : `session_${req.sessionId}`);
 
   next();
 }

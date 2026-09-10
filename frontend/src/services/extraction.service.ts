@@ -33,6 +33,7 @@ export interface Extraction {
   suggested_reply?: string;
   reply_reason?: string;
   reply_tone?: string;
+  source_text?: string;
 }
 
 export interface ExtractionFilters {

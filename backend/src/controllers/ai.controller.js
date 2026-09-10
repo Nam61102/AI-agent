@@ -25,16 +25,9 @@ async function suggestReply(req, res) {
     });
 
     if (!result.success) {
-      const lowerText = (text || '').toLowerCase();
-      const isMarathi = /ho|bhetu|kay|kasa|kuth|kiti|bhava|nakki/i.test(lowerText);
-      const isHinglish = /bhai|kya|haan|chal|aur|bata/i.test(lowerText);
       const fallbackReply = /birthday/i.test(text)
-        ? 'Happy Birthday! Wishing you a great day ahead! 🎂'
-        : isMarathi
-        ? 'हो नक्की, मी बघतो.'
-        : isHinglish
-        ? 'Haan dekhta hu abhi.'
-        : 'Got it, looking into this right away.';
+        ? 'Happy Birthday! I hope you have a wonderful day. Let me know how you would like to celebrate.'
+        : `Thanks for sharing this. I will get back to you shortly.`;
       console.warn('[AIController] Reply generation unavailable, using fallback:', result.error);
       return res.json({ success: true, data: { suggested_reply: fallbackReply, aiGenerated: false } });
     }
@@ -47,19 +40,19 @@ async function suggestReply(req, res) {
 
 async function getActions(req, res) {
   try {
-    const { status = 'active', limit = 50 } = req.query;
+    const { status = 'active', limit = 100 } = req.query;
     const accountJid = req.accountJid;
 
-    if (!accountJid) {
-      return res.status(200).json({ success: true, actions: [] });
-    }
-
     const query = `
-      SELECT DISTINCT ON (a.chat_jid)
+      SELECT 
         a.id AS action_id,
         a.type AS action_type,
+        a.category,
+        a.subtype,
         a.title,
+        a.meaning,
         a.description,
+        a.next_step,
         a.status AS action_status,
         a.priority,
         a.created_at AS action_created_at,
@@ -79,7 +72,7 @@ async function getActions(req, res) {
       LEFT JOIN messages m ON a.source_message_id = m.id
       LEFT JOIN suggested_replies sr ON a.suggested_reply_id = sr.id
       WHERE a.status = $1 AND a.account_jid = $2
-      ORDER BY a.chat_jid, a.created_at DESC
+      ORDER BY a.created_at DESC
       LIMIT $3;
     `;
 
@@ -90,11 +83,28 @@ async function getActions(req, res) {
       const rawNumber = row.chat_jid ? row.chat_jid.split('@')[0] : '';
       const contactName = row.db_contact_name || (isGroup ? 'Group' : formatPhoneNumber(rawNumber));
 
+      // Derive category if null
+      let category = row.category;
+      if (!category) {
+        if (row.action_type === 'birthday' || row.action_type === 'life_event') category = 'important_event';
+        else if (row.action_type === 'follow_up' || row.action_type === 'incident' || row.action_type === 'task') category = 'needs_action';
+        else category = 'ai_auto_reply';
+      }
+
+      const whatMatters = row.title || 'Important conversation update';
+      const whyItMatters = row.meaning || row.description || row.reason || 'Flagged by NRYN AI';
+      const recommendedAction = row.next_step || (row.suggested_reply ? 'Send suggested reply' : 'Review and take action');
+
       return {
         id: row.action_id,
+        category,
+        subtype: row.subtype || row.action_type || 'general',
         type: row.action_type,
-        title: row.title || (row.action_type === 'birthday' ? 'Birthday' : row.action_type === 'follow_up' ? 'Follow Up' : 'Reply Needed'),
-        description: row.description,
+        title: whatMatters,
+        whatMatters,
+        whyItMatters,
+        recommendedAction,
+        description: whyItMatters,
         status: row.action_status,
         priority: row.priority,
         createdAt: row.action_created_at,
@@ -124,6 +134,109 @@ async function getActions(req, res) {
     });
   } catch (error) {
     console.error('[AIController] getActions error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+async function getIntelligence(req, res) {
+  try {
+    const { status = 'active' } = req.query;
+    const accountJid = req.accountJid;
+
+    const query = `
+      SELECT 
+        a.id AS action_id,
+        a.type AS action_type,
+        a.category,
+        a.subtype,
+        a.title,
+        a.meaning,
+        a.description,
+        a.next_step,
+        a.status AS action_status,
+        a.priority,
+        a.created_at AS action_created_at,
+        c.id AS contact_id,
+        c.name AS db_contact_name,
+        a.chat_jid,
+        m.id AS source_message_id,
+        m.text AS source_message_text,
+        m.timestamp AS source_message_timestamp,
+        m.from_me AS source_from_me,
+        sr.id AS suggested_reply_id,
+        sr.suggested_reply,
+        sr.reason,
+        sr.tone
+      FROM ai_actions a
+      LEFT JOIN contacts c ON a.contact_id = c.id
+      LEFT JOIN messages m ON a.source_message_id = m.id
+      LEFT JOIN suggested_replies sr ON a.suggested_reply_id = sr.id
+      WHERE a.status = $1 AND a.account_jid = $2
+      ORDER BY a.created_at DESC;
+    `;
+
+    const result = await supabase.query(query, [status, accountJid]);
+
+    const categories = {
+      needs_action: [],
+      important_event: [],
+      relationship_insight: [],
+      ai_auto_reply: []
+    };
+
+    const allItems = result.rows.map(row => {
+      const isGroup = row.chat_jid && row.chat_jid.endsWith('@g.us');
+      const rawNumber = row.chat_jid ? row.chat_jid.split('@')[0] : '';
+      const contactName = row.db_contact_name || (isGroup ? 'Group' : formatPhoneNumber(rawNumber));
+
+      let cat = row.category;
+      if (!cat || !categories[cat]) {
+        if (row.action_type === 'birthday' || row.action_type === 'life_event') cat = 'important_event';
+        else if (row.action_type === 'follow_up' || row.action_type === 'incident' || row.action_type === 'task' || row.action_type === 'meeting') cat = 'needs_action';
+        else cat = 'ai_auto_reply';
+      }
+
+      const item = {
+        id: row.action_id,
+        category: cat,
+        subtype: row.subtype || row.action_type || 'general',
+        whatMatters: row.title || 'Important update',
+        whyItMatters: row.meaning || row.description || row.reason || 'Flagged by NRYN AI',
+        recommendedAction: row.next_step || (row.suggested_reply ? 'Send suggested reply' : 'Review context'),
+        status: row.action_status,
+        createdAt: row.action_created_at,
+        contact: {
+          id: row.contact_id,
+          name: contactName,
+          jid: row.chat_jid
+        },
+        sourceMessage: {
+          id: row.source_message_id,
+          text: row.source_message_text,
+          timestamp: row.source_message_timestamp
+        },
+        suggestedReply: {
+          id: row.suggested_reply_id,
+          text: row.suggested_reply,
+          reason: row.reason,
+          tone: row.tone
+        }
+      };
+
+      if (categories[cat]) {
+        categories[cat].push(item);
+      }
+      return item;
+    });
+
+    return res.status(200).json({
+      success: true,
+      categories,
+      totalCount: allItems.length,
+      items: allItems
+    });
+  } catch (error) {
+    console.error('[AIController] getIntelligence error:', error.message);
     return res.status(500).json({ success: false, error: error.message });
   }
 }
@@ -296,6 +409,7 @@ async function analyzeActiveChats(req, res) {
 module.exports = {
   suggestReply,
   getActions,
+  getIntelligence,
   getActionById,
   dismissAction,
   getDashboardSummary,

@@ -17,17 +17,15 @@ class MessageProcessorService {
   }
 
   /**
-   * Controlled backfill processing for unreplied incoming messages
+   * Controlled backfill processing (only recent 15 minutes by default on startup)
    */
-  async processPendingMessages(limit = 15, accountJid) {
-    const params = [];
+  async processPendingMessages(limit = 20, accountJid) {
+    const params = [limit];
     let accountFilter = '';
     if (accountJid) {
-      params.push(accountJid);
-      accountFilter = `AND m.account_jid = $${params.length}`;
+      params.unshift(accountJid);
+      accountFilter = 'AND m.account_jid = $1';
     }
-    params.push(limit);
-    const limitParam = `$${params.length}`;
 
     const query = `
       SELECT m.*
@@ -36,51 +34,31 @@ class MessageProcessorService {
         AND m.from_me = false
         AND NULLIF(TRIM(m.text), '') IS NOT NULL
         ${accountFilter}
-        AND m.timestamp >= NOW() - INTERVAL '24 hours'
         AND NOT EXISTS (
-          SELECT 1 FROM suggested_replies sr WHERE sr.source_message_id = m.id
+          SELECT 1 FROM ai_actions a WHERE a.source_message_id = m.id
         )
       ORDER BY m.timestamp DESC
-      LIMIT ${limitParam};
+      LIMIT $${params.length};
     `;
 
     try {
-      let result = await supabase.query(query, params);
-      
-      // If none found in 24 hours, check latest unreplied messages
-      if (result.rows.length === 0) {
-        const fallbackQuery = `
-          SELECT m.*
-          FROM messages m
-          WHERE m.message_type = 'text'
-            AND m.from_me = false
-            AND NULLIF(TRIM(m.text), '') IS NOT NULL
-            ${accountFilter}
-            AND NOT EXISTS (
-              SELECT 1 FROM suggested_replies sr WHERE sr.source_message_id = m.id
-            )
-          ORDER BY m.timestamp DESC
-          LIMIT ${limitParam};
-        `;
-        result = await supabase.query(fallbackQuery, params);
-      }
-
+      const result = await supabase.query(query, params);
       if (result.rows.length === 0) {
         return;
       }
 
-      console.log(`[AI] Processing ${result.rows.length} pending message(s) for account [${accountJid || 'all'}]`);
+      console.log(`[AI Engine] Backfilling/Processing ${result.rows.length} pending WhatsApp message(s)...`);
 
       for (const message of result.rows) {
         const res = await this._processAsync(message);
         if (res && res.isRateLimited) {
-          console.warn('[AI] Rate limit reached across models. Pausing queue.');
+          console.warn('[AI Engine] Rate limit reached across models. Pausing queue.');
           break;
         }
-        await new Promise(resolve => setTimeout(resolve, 200));
+        await new Promise(resolve => setTimeout(resolve, 250));
       }
     } catch (error) {
-      console.error('[AI] Pending message processing failed:', error.message);
+      console.error('[AI Engine] Pending message processing failed:', error.message);
     }
   }
 
@@ -94,7 +72,7 @@ class MessageProcessorService {
       return { success: true };
     }
 
-    // Outgoing messages don't need AI suggested replies
+    // Outgoing messages don't need AI analysis/replies
     if (message.from_me) {
       return { success: true };
     }
@@ -102,54 +80,93 @@ class MessageProcessorService {
     const accountJid = message.account_jid || 'default_user';
 
     try {
+      // Avoid re-processing if action already exists for this exact source_message_id
+      const existingActionForMsg = await supabase.query(
+        `SELECT id FROM ai_actions WHERE source_message_id = $1 AND account_jid = $2 LIMIT 1;`,
+        [message.id, accountJid]
+      );
+      if (existingActionForMsg.rows.length > 0) {
+        return { success: true };
+      }
+
       // 1. Fetch Contact & Relationship Context
       const contact = await contactService.findContactByJid(message.chat_jid, accountJid) || {
         jid: message.chat_jid,
         name: null
       };
 
-      // 2. Fetch Recent Conversation Thread History (up to 10 messages for rich language & tone context)
+      // 2. Fetch Recent Conversation Thread History
       const threadHistory = await messageService.getRecentThreadHistory(message.chat_jid, 10, message.id, accountJid);
 
-      // 3. Trigger Conversational Reply Engine with Language & Slang detection
-      console.log(`[AI Reply] Analyzing incoming message ${message.id} from ${contact.name || message.chat_jid}`);
-      const replyResult = await replyService.generateReply({
-        contact: {
-          name: contact.name,
-          jid: contact.jid,
-          layer: contact.layer,
-          is_group: message.chat_jid.endsWith('@g.us')
-        },
-        conversationHistory: threadHistory,
-        currentMessage: {
-          id: message.id,
-          sender: contact.name || message.sender_jid,
-          text: message.text,
-          timestamp: message.timestamp
-        }
-      });
-
-      if (!replyResult.success) {
-        console.warn(`[AI Reply] Analysis unavailable for msg ${message.id}:`, replyResult.error);
-        return replyResult;
+      // 3. Process extraction using AI Extraction Service
+      console.log(`[AI Engine] Analyzing message ${message.id} from ${contact.name || message.chat_jid}`);
+      const extractionRes = await extractionService.processMessage(message.text, message.timestamp);
+      
+      let normalized = null;
+      if (extractionRes.success && extractionRes.data) {
+        normalized = extractionService.normalizeExtraction(extractionRes.data);
       }
 
-      const { should_reply, action_type, suggested_reply, reason, detected_language, detected_tone, event_details } = replyResult.data || {};
+      // 4. Fallback / Augment with Reply Service if needed
+      let suggestedReply = normalized?.suggestedReply || null;
+      let replyReason = normalized?.whyItMatters || null;
 
-      if (should_reply && suggested_reply) {
-        // Save Suggested Reply to Database scoped to account_jid
+      if (!normalized || !suggestedReply) {
+        const replyResult = await replyService.generateReply({
+          contact: {
+            name: contact.name,
+            jid: contact.jid,
+            layer: contact.layer,
+            is_group: message.chat_jid.endsWith('@g.us')
+          },
+          conversationHistory: threadHistory,
+          currentMessage: {
+            id: message.id,
+            sender: contact.name || message.sender_jid,
+            text: message.text,
+            timestamp: message.timestamp
+          }
+        });
+
+        if (replyResult.success && replyResult.data) {
+          const rData = replyResult.data;
+          if (rData.needs_reply && rData.suggested_reply) {
+            suggestedReply = rData.suggested_reply;
+            replyReason = rData.reason;
+            
+            if (!normalized) {
+              const actType = rData.action_type || 'ai_reply';
+              let category = 'ai_auto_reply';
+              if (actType === 'birthday') category = 'important_event';
+              else if (actType === 'follow_up' || actType === 'incident') category = 'needs_action';
+
+              normalized = {
+                category,
+                subtype: actType,
+                confidence: 0.92,
+                status: 'active',
+                whatMatters: rData.event_details?.title || (category === 'needs_action' ? 'Action Required' : 'Message Received'),
+                whyItMatters: rData.reason || 'AI detected a response is expected.',
+                recommendedAction: suggestedReply ? 'Send suggested reply' : 'Review message context',
+                suggestedReply: rData.suggested_reply
+              };
+            }
+          }
+        }
+      }
+
+      // 5. If item is classified as important / relevant, store it permanently in database
+      if (normalized && normalized.category) {
+        const { category, subtype, whatMatters, whyItMatters, recommendedAction, confidence } = normalized;
+
+        // Save suggested reply if available
         let suggestedReplyId = null;
-        const existingReply = await supabase.query(
-          `SELECT id FROM suggested_replies WHERE source_message_id = $1 AND account_jid = $2 LIMIT 1;`,
-          [message.id, accountJid]
-        );
-
-        if (existingReply.rows.length === 0) {
+        if (suggestedReply) {
           const insertReplyQuery = `
             INSERT INTO suggested_replies (
               account_jid, contact_id, chat_jid, source_message_id, suggested_reply, action_type, reason, tone, status, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', NOW(), NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'casual', 'pending', NOW(), NOW())
             RETURNING id;
           `;
           const replyRes = await supabase.query(insertReplyQuery, [
@@ -157,99 +174,65 @@ class MessageProcessorService {
             message.contact_id || contact.id,
             message.chat_jid,
             message.id,
-            suggested_reply,
-            action_type,
-            reason,
-            detected_tone || 'casual'
+            suggestedReply,
+            subtype || category,
+            whyItMatters
           ]);
           suggestedReplyId = replyRes.rows[0]?.id;
-          console.log(`[AI Reply] Suggested reply saved (ID: ${suggestedReplyId}, Lang: ${detected_language}) for message ${message.id}`);
-        } else {
-          suggestedReplyId = existingReply.rows[0].id;
-          await supabase.query(
-            `UPDATE suggested_replies SET suggested_reply = $1, reason = $2, tone = $3, updated_at = NOW() WHERE id = $4`,
-            [suggested_reply, reason, detected_tone || 'casual', suggestedReplyId]
-          );
         }
 
-        // Create or update unique active AI Action for this chat scoped to account_jid
-        const existingAction = await supabase.query(
-          `SELECT id FROM ai_actions WHERE chat_jid = $1 AND account_jid = $2 AND status = 'active' LIMIT 1;`,
-          [message.chat_jid, accountJid]
-        );
+        // Save unique AI Action record (DO NOT OVERWRITE previous actions!)
+        const insertActionQuery = `
+          INSERT INTO ai_actions (
+            account_jid, contact_id, chat_jid, source_message_id, suggested_reply_id, type, category, subtype, title, meaning, description, next_step, status, priority, created_at, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active', 1.0, NOW(), NOW())
+          RETURNING id;
+        `;
+        const actionRes = await supabase.query(insertActionQuery, [
+          accountJid,
+          message.contact_id || contact.id,
+          message.chat_jid,
+          message.id,
+          suggestedReplyId,
+          subtype || category,
+          category,
+          subtype || category,
+          whatMatters,
+          whyItMatters,
+          whyItMatters,
+          recommendedAction
+        ]);
 
-        let title = action_type === 'birthday' 
-          ? 'Birthday' 
-          : action_type === 'follow_up' 
-          ? 'Follow Up' 
-          : action_type === 'incident'
-          ? 'Urgent Incident'
-          : 'Reply Needed';
+        console.log(`[AI Engine] Created Intelligence Action (ID: ${actionRes.rows[0]?.id}) [${category} / ${subtype}] for msg ${message.id}`);
 
-        if (event_details?.title) {
-          title = event_details.title;
-        }
+        // Save to extractions table
+        const insertExtrQuery = `
+          INSERT INTO extractions (account_jid, contact_id, source_message_id, type, payload, confidence, status, extracted_at)
+          VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW())
+          RETURNING id;
+        `;
+        await supabase.query(insertExtrQuery, [
+          accountJid,
+          message.contact_id || contact.id,
+          message.id,
+          category,
+          JSON.stringify({
+            category,
+            subtype,
+            what_matters: whatMatters,
+            why_it_matters: whyItMatters,
+            recommended_action: recommendedAction,
+            suggested_reply: suggestedReply
+          }),
+          confidence || 0.95
+        ]);
 
-        if (existingAction.rows.length === 0) {
-          const insertActionQuery = `
-            INSERT INTO ai_actions (
-              account_jid, contact_id, chat_jid, source_message_id, suggested_reply_id, type, title, description, status, priority, created_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', 1.0, NOW())
-            RETURNING id;
-          `;
-          const actionRes = await supabase.query(insertActionQuery, [
-            accountJid,
-            message.contact_id || contact.id,
-            message.chat_jid,
-            message.id,
-            suggestedReplyId,
-            action_type,
-            title,
-            reason
-          ]);
-          console.log(`[AI Reply] AI Action created (ID: ${actionRes.rows[0]?.id}) [${action_type}] for message ${message.id}`);
-        } else {
-          await supabase.query(
-            `UPDATE ai_actions 
-             SET source_message_id = $1, 
-                 suggested_reply_id = $2, 
-                 title = $3, 
-                 description = $4, 
-                 type = $5, 
-                 updated_at = NOW() 
-             WHERE id = $6`,
-            [message.id, suggestedReplyId, title, reason, action_type, existingAction.rows[0].id]
-          );
-          console.log(`[AI Reply] AI Action updated (ID: ${existingAction.rows[0].id}) for chat ${message.chat_jid}`);
-        }
-
-        // Also save extracted event to extractions table if event_details present
-        if (event_details && (event_details.title || event_details.date)) {
-          const checkExtr = await supabase.query(
-            `SELECT id FROM extractions WHERE source_message_id = $1 AND account_jid = $2 LIMIT 1;`,
-            [message.id, accountJid]
-          );
-          if (checkExtr.rows.length === 0) {
-            const extrType = action_type === 'birthday' ? 'life_event' : action_type === 'incident' ? 'incident' : 'task';
-            await supabase.query(
-              `INSERT INTO extractions (account_jid, contact_id, source_message_id, type, payload, confidence, status)
-               VALUES ($1, $2, $3, $4, $5, 0.95, 'active')`,
-              [
-                accountJid,
-                message.contact_id || contact.id,
-                message.id,
-                extrType,
-                JSON.stringify(event_details)
-              ]
-            );
-          }
-        }
+        return { success: true };
       } else {
-        console.log(`[AI Reply] No reply needed for message ${message.id}: ${replyResult.data?.reason || 'Conversational closing'}`);
+        console.log(`[AI Engine] Message ${message.id} filtered out (casual chatter / low value).`);
+        return { success: true };
       }
-
-      return { success: true };
     } catch (err) {
       console.error(`[MessageProcessor] Error processing message ${message.id}:`, err.message);
       return { success: false, error: err.message };

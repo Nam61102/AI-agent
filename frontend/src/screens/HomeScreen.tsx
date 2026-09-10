@@ -28,7 +28,12 @@ interface HomeScreenProps {
 
 interface UnifiedAction {
   id: string;
-  type: 'reply_needed' | 'follow_up' | 'birthday';
+  category: 'needs_action' | 'important_event' | 'relationship_insight' | 'ai_auto_reply';
+  subtype: string;
+  type: string;
+  whatMatters: string;
+  whyItMatters: string;
+  recommendedAction: string;
   contactName: string;
   chatJid: string;
   timeFormatted: string;
@@ -57,6 +62,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [sendingActionId, setSendingActionId] = useState<string | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [selectedCategoryTab, setSelectedCategoryTab] = useState<string>('all');
 
   // Live AI Backend State
   const [aiActions, setAiActions] = useState<AIAction[]>([]);
@@ -105,7 +111,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       setAiActions(actions);
       const summary = await aiService.getDashboardSummary();
       setDashboardSummary(summary);
-      showNotification(`AI Analysis complete! Found ${actions.length} action(s).`);
+      showNotification(`AI Analysis complete! Found ${actions.length} intelligence item(s).`);
     } catch (err) {
       showNotification('Failed to complete AI analysis');
     } finally {
@@ -153,14 +159,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         else timeStr = msgDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
       }
 
+      const category = action.category || (action.type === 'birthday' ? 'important_event' : action.type === 'follow_up' ? 'needs_action' : 'ai_auto_reply');
+
       list.push({
         id: `ai_${action.id}`,
+        category: category as any,
+        subtype: action.subtype || action.type || 'general',
         type: action.type,
+        whatMatters: action.whatMatters || action.title || 'Important update',
+        whyItMatters: action.whyItMatters || action.description || 'Flagged by NRYN AI',
+        recommendedAction: action.recommendedAction || (action.suggestedReply?.text ? 'Send suggested reply' : 'Review context'),
         contactName: action.contact.name || 'WhatsApp Contact',
         chatJid: action.contact.jid || '',
         timeFormatted: timeStr,
         sourceMessage: action.sourceMessage.text || '',
-        suggestedReply: action.suggestedReply.text || '',
+        suggestedReply: action.suggestedReply?.text || '',
         actionId: action.id
       });
     });
@@ -168,13 +181,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return list;
   }, [aiActions]);
 
-  // Filter out dismissed items
+  // Filter out dismissed items & category filter
   const filteredActions = useMemo(() => {
-    return unifiedActions.filter((action) => !dismissedActionIds.has(action.id));
-  }, [unifiedActions, dismissedActionIds]);
+    return unifiedActions.filter((action) => {
+      if (dismissedActionIds.has(action.id)) return false;
+      if (selectedCategoryTab !== 'all' && action.category !== selectedCategoryTab) return false;
+      return true;
+    });
+  }, [unifiedActions, dismissedActionIds, selectedCategoryTab]);
 
   const activeChatsCount = dashboardSummary?.activeConversations ?? chats.length;
-  const pendingActionsCount = filteredActions.length;
+  const pendingActionsCount = unifiedActions.filter(a => !dismissedActionIds.has(a.id)).length;
 
   const handleDismissAction = async (action: UnifiedAction) => {
     setDismissedActionIds((prev) => new Set(prev).add(action.id));
@@ -369,10 +386,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </View>
         </View>
 
-        {/* AI ACTION CENTER HEADER */}
+        {/* AI INTELLIGENCE DASHBOARD HEADER */}
         <View style={styles.sectionHeaderRow}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={styles.sectionTitle}>AI Action Center</Text>
+            <Text style={styles.sectionTitle}>AI Intelligence Dashboard</Text>
             {filteredActions.length > 0 && (
               <View style={styles.countBadge}>
                 <Text style={styles.countBadgeText}>{filteredActions.length}</Text>
@@ -393,6 +410,71 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </TouchableOpacity>
         </View>
 
+        {/* 4 CATEGORY TABS SELECTOR */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+          <View style={{ flexDirection: 'row', gap: 8, paddingRight: 16 }}>
+            <TouchableOpacity
+              style={[
+                styles.categoryTabPill,
+                selectedCategoryTab === 'all' && styles.categoryTabPillActive
+              ]}
+              onPress={() => setSelectedCategoryTab('all')}
+            >
+              <Text style={[styles.categoryTabText, selectedCategoryTab === 'all' && styles.categoryTabTextActive]}>
+                ⚡ All ({unifiedActions.filter(a => !dismissedActionIds.has(a.id)).length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.categoryTabPill,
+                selectedCategoryTab === 'needs_action' && styles.categoryTabPillRed
+              ]}
+              onPress={() => setSelectedCategoryTab('needs_action')}
+            >
+              <Text style={[styles.categoryTabText, selectedCategoryTab === 'needs_action' && styles.categoryTabTextWhite]}>
+                🔴 Needs Action ({unifiedActions.filter(a => !dismissedActionIds.has(a.id) && a.category === 'needs_action').length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.categoryTabPill,
+                selectedCategoryTab === 'important_event' && styles.categoryTabPillYellow
+              ]}
+              onPress={() => setSelectedCategoryTab('important_event')}
+            >
+              <Text style={[styles.categoryTabText, selectedCategoryTab === 'important_event' && styles.categoryTabTextWhite]}>
+                🟡 Important Events ({unifiedActions.filter(a => !dismissedActionIds.has(a.id) && a.category === 'important_event').length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.categoryTabPill,
+                selectedCategoryTab === 'relationship_insight' && styles.categoryTabPillGreen
+              ]}
+              onPress={() => setSelectedCategoryTab('relationship_insight')}
+            >
+              <Text style={[styles.categoryTabText, selectedCategoryTab === 'relationship_insight' && styles.categoryTabTextWhite]}>
+                🟢 Insights ({unifiedActions.filter(a => !dismissedActionIds.has(a.id) && a.category === 'relationship_insight').length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.categoryTabPill,
+                selectedCategoryTab === 'ai_auto_reply' && styles.categoryTabPillBlue
+              ]}
+              onPress={() => setSelectedCategoryTab('ai_auto_reply')}
+            >
+              <Text style={[styles.categoryTabText, selectedCategoryTab === 'ai_auto_reply' && styles.categoryTabTextWhite]}>
+                🔵 Auto-Replies ({unifiedActions.filter(a => !dismissedActionIds.has(a.id) && a.category === 'ai_auto_reply').length})
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+
         {/* ACTION CENTER CONTENT */}
         {loadingAIActions && unifiedActions.length === 0 ? (
           <View style={styles.skeletonContainer}>
@@ -410,9 +492,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         ) : filteredActions.length === 0 ? (
           <View style={styles.emptyCaughtUpCard}>
             <Text style={styles.emptyStarIcon}>✨</Text>
-            <Text style={styles.emptyCaughtUpTitle}>You're all caught up</Text>
+            <Text style={styles.emptyCaughtUpTitle}>No items in this category</Text>
             <Text style={styles.emptyCaughtUpSub}>
-              NRYN has analyzed your conversations and there are no pending replies right now.
+              NRYN continuously analyzes your WhatsApp messages in background and filters out 90% of casual chatter.
             </Text>
             <TouchableOpacity 
               style={styles.emptyActionBtn} 
@@ -434,13 +516,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               ? customReplyTexts[action.id] 
               : action.suggestedReply;
 
+            let catLabel = '🔴 Needs Action';
+            let catBg = '#FEF2F2';
+            let catBorder = '#FECACA';
+            let catText = '#991B1B';
+
+            if (action.category === 'important_event') {
+              catLabel = '🟡 Important Event';
+              catBg = '#FFFBEB'; catBorder = '#FDE68A'; catText = '#92400E';
+            } else if (action.category === 'relationship_insight') {
+              catLabel = '🟢 Relationship Insight';
+              catBg = '#ECFDF5'; catBorder = '#A7F3D0'; catText = '#065F46';
+            } else if (action.category === 'ai_auto_reply') {
+              catLabel = '🔵 AI Auto-Reply';
+              catBg = '#EFF6FF'; catBorder = '#BFDBFE'; catText = '#1E40AF';
+            }
+
             return (
               <View key={action.id} style={styles.actionCard}>
-                {/* Action Type Badge Header */}
+                {/* Action Category Badge Header */}
                 <View style={styles.actionTopRow}>
-                  <View style={[styles.actionBadge, getActionBadgeStyle(action.type)]}>
-                    <Text style={[styles.actionBadgeText, getActionBadgeTextStyle(action.type)]}>
-                      {action.type === 'reply_needed' ? '💬 Reply Needed' : action.type === 'follow_up' ? '🔄 Follow Up' : '🎂 Birthday'}
+                  <View style={[styles.actionBadge, { backgroundColor: catBg, borderColor: catBorder }]}>
+                    <Text style={[styles.actionBadgeText, { color: catText }]}>
+                      {catLabel} • {action.subtype}
                     </Text>
                   </View>
                   <Text style={styles.actionTimeText}>{action.timeFormatted}</Text>
@@ -454,49 +552,63 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   <Text style={styles.contactNameText}>{action.contactName}</Text>
                 </View>
 
-                {/* SOURCE MESSAGE BOX */}
-                <View style={styles.sourceMessageBox}>
-                  <Text style={styles.sourceMessageLabel}>SOURCE MESSAGE</Text>
-                  <Text style={styles.sourceMessageContent}>"{action.sourceMessage}"</Text>
+                {/* 📌 WHAT MATTERS */}
+                <View style={styles.intelDetailSection}>
+                  <Text style={styles.intelDetailLabel}>📌 WHAT MATTERS</Text>
+                  <Text style={styles.intelDetailWhat}>{action.whatMatters}</Text>
+                </View>
+
+                {/* 💡 WHY IT MATTERS */}
+                <View style={styles.intelDetailSection}>
+                  <Text style={styles.intelDetailLabel}>💡 WHY IT MATTERS</Text>
+                  <Text style={styles.intelDetailWhy}>{action.whyItMatters}</Text>
+                </View>
+
+                {/* 🤖 WHAT NRYN RECOMMENDS */}
+                <View style={[styles.intelDetailSection, styles.intelRecommendBox]}>
+                  <Text style={[styles.intelDetailLabel, { color: '#4F46E5' }]}>🤖 WHAT NRYN RECOMMENDS</Text>
+                  <Text style={styles.intelRecommendText}>{action.recommendedAction}</Text>
                 </View>
 
                 {/* AI SUGGESTED REPLY BOX */}
-                <View style={styles.suggestedReplyBox}>
-                  <View style={styles.suggestedReplyHeader}>
-                    <Text style={styles.suggestedReplyLabel}>AI SUGGESTED REPLY</Text>
-                    {!isEditing && (
-                      <TouchableOpacity onPress={() => {
-                        setEditingActionId(action.id);
-                        if (customReplyTexts[action.id] === undefined) {
-                          setCustomReplyTexts(prev => ({ ...prev, [action.id]: action.suggestedReply }));
-                        }
-                      }}>
-                        <Text style={styles.editToggleText}>✏️ Edit</Text>
-                      </TouchableOpacity>
+                {action.suggestedReply ? (
+                  <View style={styles.suggestedReplyBox}>
+                    <View style={styles.suggestedReplyHeader}>
+                      <Text style={styles.suggestedReplyLabel}>💬 AI SUGGESTED REPLY</Text>
+                      {!isEditing && (
+                        <TouchableOpacity onPress={() => {
+                          setEditingActionId(action.id);
+                          if (customReplyTexts[action.id] === undefined) {
+                            setCustomReplyTexts(prev => ({ ...prev, [action.id]: action.suggestedReply }));
+                          }
+                        }}>
+                          <Text style={styles.editToggleText}>✏️ Edit</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {isEditing ? (
+                      <View style={styles.editReplyContainer}>
+                        <TextInput
+                          style={styles.editReplyInput}
+                          value={currentReplyText}
+                          onChangeText={(txt) => setCustomReplyTexts(prev => ({ ...prev, [action.id]: txt }))}
+                          multiline
+                          autoFocus
+                          placeholderTextColor="#94A3B8"
+                        />
+                        <TouchableOpacity 
+                          style={styles.doneEditingBtn} 
+                          onPress={() => setEditingActionId(null)}
+                        >
+                          <Text style={styles.doneEditingBtnText}>Done</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <Text style={styles.suggestedReplyText}>"{currentReplyText}"</Text>
                     )}
                   </View>
-
-                  {isEditing ? (
-                    <View style={styles.editReplyContainer}>
-                      <TextInput
-                        style={styles.editReplyInput}
-                        value={currentReplyText}
-                        onChangeText={(txt) => setCustomReplyTexts(prev => ({ ...prev, [action.id]: txt }))}
-                        multiline
-                        autoFocus
-                        placeholderTextColor="#94A3B8"
-                      />
-                      <TouchableOpacity 
-                        style={styles.doneEditingBtn} 
-                        onPress={() => setEditingActionId(null)}
-                      >
-                        <Text style={styles.doneEditingBtnText}>Done</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <Text style={styles.suggestedReplyText}>"{currentReplyText}"</Text>
-                  )}
-                </View>
+                ) : null}
 
                 {/* ACTION BUTTONS ROW */}
                 <View style={styles.actionButtonsRow}>
@@ -509,18 +621,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   </TouchableOpacity>
 
                   <View style={styles.actionRightGroup}>
-                    <TouchableOpacity
-                      style={styles.sendReplyBtn}
-                      onPress={() => handleSendReply(action)}
-                      disabled={sendingActionId === action.id}
-                      activeOpacity={0.8}
-                    >
-                      {sendingActionId === action.id ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <Text style={styles.sendReplyBtnText}>➤ Send</Text>
-                      )}
-                    </TouchableOpacity>
+                    {action.suggestedReply ? (
+                      <TouchableOpacity
+                        style={styles.sendReplyBtn}
+                        onPress={() => handleSendReply(action)}
+                        disabled={sendingActionId === action.id}
+                        activeOpacity={0.8}
+                      >
+                        {sendingActionId === action.id ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <Text style={styles.sendReplyBtnText}>➤ Send</Text>
+                        )}
+                      </TouchableOpacity>
+                    ) : null}
 
                     <TouchableOpacity
                       style={styles.dismissBtn}
@@ -1212,5 +1326,81 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 9,
     fontWeight: '700'
+  },
+  categoryTabPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1'
+  },
+  categoryTabPillActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5'
+  },
+  categoryTabPillRed: {
+    backgroundColor: '#EF4444',
+    borderColor: '#EF4444'
+  },
+  categoryTabPillYellow: {
+    backgroundColor: '#D97706',
+    borderColor: '#D97706'
+  },
+  categoryTabPillGreen: {
+    backgroundColor: '#059669',
+    borderColor: '#059669'
+  },
+  categoryTabPillBlue: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB'
+  },
+  categoryTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569'
+  },
+  categoryTabTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700'
+  },
+  categoryTabTextWhite: {
+    color: '#FFFFFF',
+    fontWeight: '700'
+  },
+  intelDetailSection: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  intelDetailLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    marginBottom: 2
+  },
+  intelDetailWhat: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A'
+  },
+  intelDetailWhy: {
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 16
+  },
+  intelRecommendBox: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE'
+  },
+  intelRecommendText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#312E81',
+    lineHeight: 16
   }
 });

@@ -24,8 +24,7 @@ router.get('/', async (req, res) => {
       LEFT JOIN contacts chat ON chat.jid = m.chat_jid AND chat.account_jid = $1
       LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending' AND sr.account_jid = $1
       WHERE e.account_jid = $1
-      AND e.type != 'none' AND e.confidence >= 0.90
-      AND (m.timestamp >= NOW() - INTERVAL '24 hours' OR m.timestamp IS NULL)`;
+      AND e.type != 'none' AND e.confidence >= 0.70`;
     
     const values = [accountJid];
     let paramIndex = 2;
@@ -46,25 +45,7 @@ router.get('/', async (req, res) => {
     query += ' ORDER BY e.extracted_at DESC';
 
     const result = await supabase.query(query, values);
-
-    const now = new Date();
-    
-    const validRows = result.rows.filter(row => {
-      if (row.payload && row.payload.date) {
-        let eventDateStr = row.payload.date;
-        if (row.payload.time) {
-          eventDateStr += 'T' + row.payload.time + ':00';
-        } else {
-          eventDateStr += 'T23:59:59';
-        }
-        
-        const eventDate = new Date(eventDateStr);
-        if (!isNaN(eventDate.getTime()) && eventDate < now) {
-          return false;
-        }
-      }
-      return true;
-    });
+    const validRows = result.rows;
 
     const formattedData = validRows.map(row => {
       row.chat_name = row.db_chat_name || (row.chat_jid && row.chat_jid.endsWith('@g.us') ? 'Group' : formatPhoneNumber(row.chat_jid ? row.chat_jid.split('@')[0] : ''));

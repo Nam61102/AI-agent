@@ -259,8 +259,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 10,
     marginTop: 6,
-    marginBottom: 8,
-    marginTop: 6
+    marginBottom: 8
   },
   sourceMessageLabel: {
     fontSize: 10,

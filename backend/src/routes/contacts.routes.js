@@ -66,8 +66,6 @@ router.get('/all', async (req, res) => {
         AND c.jid NOT LIKE '%@lid'
         AND c.name IS NOT NULL
         AND TRIM(c.name) != ''
-        AND c.name !~ '^[0-9+ ()-]+$'
-        AND c.name NOT LIKE '%@%'
         AND c.name != 'Group'
         AND c.name != 'Unknown'
     `;
@@ -118,8 +116,6 @@ router.get('/top', async (req, res) => {
         AND c.jid NOT LIKE '%@lid'
         AND c.name IS NOT NULL
         AND TRIM(c.name) != ''
-        AND c.name !~ '^[0-9+ ()-]+$'
-        AND c.name NOT LIKE '%@%'
         AND c.name != 'Group'
         AND c.name != 'Unknown'
       GROUP BY c.id
