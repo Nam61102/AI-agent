@@ -63,16 +63,6 @@ export const WhatsAppConnectionState: React.FC<WhatsAppConnectionStateProps> = (
   };
 
   switch (status) {
-    case 'CONNECTING':
-    case 'AUTHENTICATING':
-      return (
-        <View style={styles.stateContainer}>
-          <ActivityIndicator size="large" color="#4F46E5" style={styles.spinner} />
-          <Text style={[styles.stateTitle, { color: '#4F46E5' }]}>Connecting WhatsApp...</Text>
-          <Text style={styles.subtext}>Authenticating linked device session</Text>
-        </View>
-      );
-
     case 'CONNECTED':
       return (
         <View style={styles.stateContainer}>

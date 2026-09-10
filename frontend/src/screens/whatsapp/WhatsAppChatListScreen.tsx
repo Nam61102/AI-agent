@@ -283,7 +283,7 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({
       from_me: true,
       text: textToSend,
       timestamp: new Date().toISOString(),
-      message_type: 'text'
+      type: 'text'
     };
 
     // Optimistically show message immediately
@@ -383,7 +383,7 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({
                   </View>
                 ) : (
                   <TouchableOpacity 
-                    style={styles.syncButton} 
+                    style={styles.syncButton as any} 
                     onPress={handleManualSync}
                     activeOpacity={0.7}
                   >
@@ -633,7 +633,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
-    cursor: 'pointer' as any
   },
   syncButtonIcon: {
     fontSize: 12,
@@ -672,7 +671,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 8,
     marginLeft: 'auto',
-    cursor: 'pointer' as any
   },
   activeChatSyncIcon: {
     fontSize: 12,
@@ -1052,8 +1050,9 @@ const styles = StyleSheet.create({
   sendBtn: {
     width: 40,
     height: 40,
-    backgroundColor: '#2563EB',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderRadius: 20,
+    shadowColor: '#000',
     alignItems: 'center',
     justifyContent: 'center'
   },

@@ -110,11 +110,21 @@ export const PeopleScreen: React.FC<PeopleScreenProps> = ({
 
   // Filter contacts by search query matching contact names only
   const filteredContacts = useMemo(() => {
-    if (!searchQuery.trim()) return contacts;
-    const query = searchQuery.toLowerCase().trim();
-    return contacts.filter((c: any) => {
-      const name = String(c.name || '').toLowerCase();
-      return name.includes(query);
+    let result = contacts;
+    
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      result = contacts.filter((c: any) => {
+        const name = String(c.name || '').toLowerCase();
+        return name.includes(query);
+      });
+    }
+    
+    // Sort by relationship_score descending
+    return [...result].sort((a: any, b: any) => {
+      const scoreA = a.relationship_score || 0;
+      const scoreB = b.relationship_score || 0;
+      return scoreB - scoreA;
     });
   }, [contacts, searchQuery]);
 

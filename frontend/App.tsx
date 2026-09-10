@@ -9,10 +9,12 @@ import { WhatsAppChatListScreen } from './src/screens/whatsapp/WhatsAppChatListS
 import { ExtractionsScreen } from './src/screens/extractions/ExtractionsScreen';
 import { PeopleScreen } from './src/screens/PeopleScreen';
 import { useWhatsApp } from './src/hooks/useWhatsApp';
+import { usePushNotifications } from './src/hooks/usePushNotifications';
 
 type ScreenName = 'HOME_SCREEN' | 'CONNECTION_SCREEN' | 'QR_SCREEN' | 'CHAT_SCREEN' | 'EXTRACTIONS_SCREEN' | 'PEOPLE_SCREEN';
 
 export default function App() {
+  usePushNotifications();
   const { isConnected, status, connect } = useWhatsApp();
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [currentScreen, setCurrentScreen] = useState<ScreenName>('HOME_SCREEN');

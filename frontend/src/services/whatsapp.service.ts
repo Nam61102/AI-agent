@@ -272,6 +272,7 @@ class WhatsAppService {
       const data = await response.json();
       if (data.success && data.code) {
         this.currentPairingCode = data.code;
+        this.updateStatus('QR_READY');
         this.notifyPairingCode(data.code);
         return { success: true, code: data.code };
       } else {

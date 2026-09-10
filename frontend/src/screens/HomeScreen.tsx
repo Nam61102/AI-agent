@@ -43,6 +43,11 @@ interface UnifiedAction {
   extractionId?: number;
 }
 
+const formatActionSubtype = (subtype: string) => subtype
+  .split('_')
+  .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+  .join(' ');
+
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onConnect,
   onOpenChat,
@@ -516,19 +521,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               ? customReplyTexts[action.id] 
               : action.suggestedReply;
 
-            let catLabel = '🔴 Needs Action';
+            let catLabel = 'Needs Action';
             let catBg = '#FEF2F2';
             let catBorder = '#FECACA';
             let catText = '#991B1B';
 
             if (action.category === 'important_event') {
-              catLabel = '🟡 Important Event';
+              catLabel = 'Important Event';
               catBg = '#FFFBEB'; catBorder = '#FDE68A'; catText = '#92400E';
             } else if (action.category === 'relationship_insight') {
-              catLabel = '🟢 Relationship Insight';
+              catLabel = 'Relationship Insight';
               catBg = '#ECFDF5'; catBorder = '#A7F3D0'; catText = '#065F46';
             } else if (action.category === 'ai_auto_reply') {
-              catLabel = '🔵 AI Auto-Reply';
+              catLabel = 'AI Auto-Reply';
               catBg = '#EFF6FF'; catBorder = '#BFDBFE'; catText = '#1E40AF';
             }
 
@@ -538,7 +543,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <View style={styles.actionTopRow}>
                   <View style={[styles.actionBadge, { backgroundColor: catBg, borderColor: catBorder }]}>
                     <Text style={[styles.actionBadgeText, { color: catText }]}>
-                      {catLabel} • {action.subtype}
+                      {catLabel} · {formatActionSubtype(action.subtype)}
                     </Text>
                   </View>
                   <Text style={styles.actionTimeText}>{action.timeFormatted}</Text>
@@ -554,19 +559,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
                 {/* 📌 WHAT MATTERS */}
                 <View style={styles.intelDetailSection}>
-                  <Text style={styles.intelDetailLabel}>📌 WHAT MATTERS</Text>
+                  <Text style={styles.intelDetailLabel}>What matters</Text>
                   <Text style={styles.intelDetailWhat}>{action.whatMatters}</Text>
                 </View>
 
                 {/* 💡 WHY IT MATTERS */}
                 <View style={styles.intelDetailSection}>
-                  <Text style={styles.intelDetailLabel}>💡 WHY IT MATTERS</Text>
+                  <Text style={styles.intelDetailLabel}>Why it matters</Text>
                   <Text style={styles.intelDetailWhy}>{action.whyItMatters}</Text>
                 </View>
 
                 {/* 🤖 WHAT NRYN RECOMMENDS */}
                 <View style={[styles.intelDetailSection, styles.intelRecommendBox]}>
-                  <Text style={[styles.intelDetailLabel, { color: '#4F46E5' }]}>🤖 WHAT NRYN RECOMMENDS</Text>
+                  <Text style={[styles.intelDetailLabel, { color: '#4F46E5' }]}>NRYN recommends</Text>
                   <Text style={styles.intelRecommendText}>{action.recommendedAction}</Text>
                 </View>
 
@@ -574,7 +579,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 {action.suggestedReply ? (
                   <View style={styles.suggestedReplyBox}>
                     <View style={styles.suggestedReplyHeader}>
-                      <Text style={styles.suggestedReplyLabel}>💬 AI SUGGESTED REPLY</Text>
+                      <Text style={styles.suggestedReplyLabel}>Suggested reply</Text>
                       {!isEditing && (
                         <TouchableOpacity onPress={() => {
                           setEditingActionId(action.id);
@@ -617,7 +622,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     onPress={() => onOpenChat(action.chatJid, action.sourceMessage)}
                     activeOpacity={0.7}
                   >
-                    <Text style={styles.viewMessageBtnText}>👁️ View Message</Text>
+                      <Text style={styles.viewMessageBtnText}>View message</Text>
                   </TouchableOpacity>
 
                   <View style={styles.actionRightGroup}>
@@ -631,7 +636,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         {sendingActionId === action.id ? (
                           <ActivityIndicator size="small" color="#FFFFFF" />
                         ) : (
-                          <Text style={styles.sendReplyBtnText}>➤ Send</Text>
+                          <Text style={styles.sendReplyBtnText}>Send reply</Text>
                         )}
                       </TouchableOpacity>
                     ) : null}
@@ -1019,12 +1024,12 @@ const styles = StyleSheet.create({
     color: '#4F46E5'
   },
   actionCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 14,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
@@ -1035,12 +1040,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10
+    marginBottom: 12
   },
   actionBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1
   },
   actionBadgeText: {
@@ -1055,7 +1060,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 12
+    marginBottom: 14
   },
   contactAvatar: {
     width: 32,
@@ -1071,7 +1076,7 @@ const styles = StyleSheet.create({
     fontSize: 13
   },
   contactNameText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
     color: '#0F172A'
   },
@@ -1103,8 +1108,8 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: '#4F46E5',
     borderRadius: 6,
-    padding: 10,
-    marginBottom: 14,
+    padding: 12,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#C7D2FE'
   },
@@ -1162,6 +1167,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
     paddingTop: 10
@@ -1370,37 +1377,39 @@ const styles = StyleSheet.create({
   },
   intelDetailSection: {
     backgroundColor: '#F8FAFC',
-    borderRadius: 8,
-    padding: 10,
+    borderRadius: 6,
+    padding: 11,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0'
+    borderColor: '#EDF2F7'
   },
   intelDetailLabel: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '800',
     color: '#64748B',
-    letterSpacing: 0.5,
-    marginBottom: 2
+    letterSpacing: 0.8,
+    marginBottom: 5,
+    textTransform: 'uppercase'
   },
   intelDetailWhat: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#0F172A'
+    color: '#0F172A',
+    lineHeight: 20
   },
   intelDetailWhy: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#334155',
-    lineHeight: 16
+    lineHeight: 19
   },
   intelRecommendBox: {
     backgroundColor: '#EEF2FF',
     borderColor: '#C7D2FE'
   },
   intelRecommendText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     color: '#312E81',
-    lineHeight: 16
+    lineHeight: 19
   }
 });
