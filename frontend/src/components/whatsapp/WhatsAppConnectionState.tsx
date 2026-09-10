@@ -39,16 +39,26 @@ export const WhatsAppConnectionState: React.FC<WhatsAppConnectionStateProps> = (
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [mode, setMode] = useState<'QR' | 'PHONE'>('QR');
 
+  React.useEffect(() => {
+    if (activePairingCode) {
+      setPairingCodeState(activePairingCode);
+    }
+  }, [activePairingCode]);
+
   const handleGetPairingCode = async () => {
-    if (!phoneNumber || phoneNumber.trim().length < 8) {
-      setPairingError('Please enter a valid 10-digit mobile number');
+    let cleanPhone = phoneNumber.replace(/\D/g, '');
+    if (cleanPhone.length === 10) {
+      cleanPhone = '91' + cleanPhone;
+    }
+    if (!cleanPhone || cleanPhone.length < 10) {
+      setPairingError('Please enter a valid 10-digit mobile number or full number with country code');
       return;
     }
     setPairingError(null);
     setLoadingCode(true);
     try {
       if (onRequestPairingCode) {
-        const res = await onRequestPairingCode(phoneNumber);
+        const res = await onRequestPairingCode(cleanPhone);
         if (res.success && res.code) {
           setPairingCodeState(res.code);
         } else {
@@ -159,11 +169,11 @@ export const WhatsAppConnectionState: React.FC<WhatsAppConnectionStateProps> = (
           ) : (
             <View style={styles.phonePairingCard}>
               <Text style={styles.instructionHeading}>Link with Phone Number:</Text>
-              <Text style={styles.stepText}>Enter your 10-digit mobile number with country code:</Text>
+              <Text style={styles.stepText}>Enter your 10-digit mobile number (e.g. 98765 43210 or +91 98765 43210):</Text>
 
               <TextInput
                 style={styles.phoneInput}
-                placeholder="e.g. 919876543210"
+                placeholder="e.g. 9876543210 or +919876543210"
                 placeholderTextColor="#94A3B8"
                 value={phoneNumber}
                 onChangeText={setPhoneNumber}
@@ -188,7 +198,10 @@ export const WhatsAppConnectionState: React.FC<WhatsAppConnectionStateProps> = (
                 <View style={styles.codeDisplayBox}>
                   <Text style={styles.codeLabel}>YOUR WHATSAPP PAIRING CODE:</Text>
                   <Text style={styles.codeText}>
-                    {(pairingCodeState || activePairingCode)?.replace(/(.{4})/, '$1 - ')}
+                    {(() => {
+                      const clean = (pairingCodeState || activePairingCode || '').replace(/[\s-]/g, '');
+                      return clean.length >= 8 ? (clean.slice(0, 4) + ' - ' + clean.slice(4)) : clean;
+                    })()}
                   </Text>
                   <Text style={styles.codeInstruction}>
                     On your phone: Open WhatsApp &gt; Linked Devices &gt; <Text style={styles.boldText}>Link with phone number instead</Text> &gt; enter code.
