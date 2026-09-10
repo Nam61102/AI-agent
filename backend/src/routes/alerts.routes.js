@@ -43,4 +43,28 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Register Expo Push Token
+router.post('/push-token', async (req, res) => {
+  try {
+    const { token } = req.body;
+    const accountJid = req.accountJid || 'default_user';
+
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Token is required' });
+    }
+
+    await pool.query(
+      `INSERT INTO push_tokens (account_jid, token) 
+       VALUES ($1, $2) 
+       ON CONFLICT (account_jid, token) DO NOTHING`,
+      [accountJid, token]
+    );
+
+    res.json({ success: true, message: 'Push token registered successfully' });
+  } catch (error) {
+    console.error('Failed to register push token:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 module.exports = router;

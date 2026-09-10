@@ -71,7 +71,7 @@ require('./src/jobs/nightly-scoring.job');
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\n[ERROR] Port ${PORT} is already in use by an existing backend process.`);
-    console.error(`Automated fix: Freeing port ${PORT}...\n`);
+    console.error(`The backend is likely already running at http://${HOST}:${PORT}. Stop the existing process before starting another instance.\n`);
     process.exit(1);
   } else {
     console.error('Server error:', err);

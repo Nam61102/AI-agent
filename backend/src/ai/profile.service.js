@@ -19,14 +19,16 @@ if (apiKey) {
 const primaryModel = process.env.AI_MODEL || 'google/gemini-2.5-flash';
 
 const GEMINI_SYSTEM_PROMPT = `
-You are an AI assistant that strictly analyzes chat histories for explicitly stated preferences.
+You are an AI assistant that strictly analyzes chat histories to extract the preferences of the 'Contact'.
 CRITICAL RULES FOR EXTRACTION:
-1. ONLY extract a "like" or "dislike" if the person EXPLICITLY states it (e.g., "I love pizza", "I hate waking up early", "I don't like horror movies").
-2. DO NOT extract inferred or trivial behaviors as likes/dislikes (e.g. do NOT extract "Photo sharing", "Using WhatsApp on a laptop", "Video content", "Hugging emojis"). If it's just an action they took, IGNORE IT.
-3. Keep the extracted item short and concise (e.g. "Pizza", "Waking up early").
-4. If there are no explicitly stated likes or dislikes, return an empty array [].
+1. ONLY extract likes, dislikes, or interests stated by the 'Contact'. 
+2. IGNORE any preferences, likes, or dislikes stated by 'You'. We only want to profile the 'Contact'.
+3. ONLY extract a "like" or "dislike" if the Contact EXPLICITLY states it (e.g., "I love pizza", "I hate waking up early").
+4. DO NOT extract inferred or trivial behaviors.
+5. Keep the extracted item short and concise (e.g. "Pizza", "Waking up early").
+6. If the Contact has no explicitly stated likes or dislikes, return an empty array [].
 
-Extract the following information and return ONLY a JSON object:
+Extract the following information for the 'Contact' and return ONLY a JSON object:
 {
   "likes": [{ "item": "string", "confidence": 0-100 }],
   "dislikes": [{ "item": "string", "confidence": 0-100 }],

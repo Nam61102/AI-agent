@@ -1,5 +1,6 @@
 const {
   default: makeWASocket,
+  Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
@@ -19,6 +20,8 @@ class WhatsAppSessionInstance {
     this.latestQr = null;
     this.latestPairingCode = null;
     this.isConnecting = false;
+    this.isRegistered = false;
+    this.socketCreatedAt = 0;
     this.autoReconnect = true;
     this.reconnectTimer = null;
     this.logger = pino({ level: 'silent' });
@@ -189,6 +192,7 @@ class WhatsAppSessionInstance {
 
     try {
       const { state, saveCreds } = await auth.getAuthState(this.sessionId);
+      this.isRegistered = Boolean(state.creds.registered);
       const { version, isLatest } = await fetchLatestBaileysVersion();
 
       console.log(`[WhatsAppSession:${this.sessionId}] Initializing WASocket version [${version.join('.')}]`);
@@ -198,7 +202,7 @@ class WhatsAppSessionInstance {
         auth: state,
         logger: this.logger,
         printQRInTerminal: false,
-        browser: ['NRYN AI', 'Chrome', '124.0.0'],
+        browser: Browsers.windows('Chrome'),
         syncFullHistory: true,
         shouldSyncHistoryMessage: () => true,
         generateHighQualityLinkPreview: false,
@@ -227,6 +231,7 @@ class WhatsAppSessionInstance {
           return undefined;
         }
       });
+      this.socketCreatedAt = Date.now();
 
       this.socket.ev.on('creds.update', saveCreds);
 
@@ -297,6 +302,7 @@ class WhatsAppSessionInstance {
             this.latestPairingCode = null;
             this.socket = null;
             this.connectedJid = null;
+            this.isRegistered = false;
             
             this.updateStatus('LOGGED_OUT');
             this.emit('whatsapp:logged_out', { status: 'logged_out' });
@@ -454,6 +460,51 @@ class WhatsAppSessionInstance {
     }
   }
 
+  async requestPairingCode(phoneNumber) {
+    const normalizedPhoneNumber = String(phoneNumber || '').replace(/\D/g, '');
+    if (normalizedPhoneNumber.length < 8 || normalizedPhoneNumber.length > 15) {
+      throw new Error('Enter a valid phone number with country code.');
+    }
+
+    if (this.isRegistered || this.status === 'CONNECTED') {
+      throw new Error('WhatsApp is already connected for this session.');
+    }
+
+    if (!this.socket || this.status === 'LOGGED_OUT' || this.status === 'ERROR') {
+      await this.connect();
+    }
+
+    const deadline = Date.now() + 20000;
+    while (!this.socket && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+
+    if (!this.socket || typeof this.socket.requestPairingCode !== 'function') {
+      throw new Error('WhatsApp connection is not ready for pairing. Please try again.');
+    }
+
+    while (this.socket && this.status !== 'QR_READY' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+
+    if (!this.socket || this.status !== 'QR_READY') {
+      throw new Error('WhatsApp is still preparing the pairing session. Please try again.');
+    }
+
+    const socketWarmupRemaining = 3000 - (Date.now() - this.socketCreatedAt);
+    if (socketWarmupRemaining > 0) {
+      await new Promise(resolve => setTimeout(resolve, socketWarmupRemaining));
+    }
+
+    const code = await this.socket.requestPairingCode(normalizedPhoneNumber);
+    this.latestPairingCode = code;
+    this.latestQr = null;
+    this.updateStatus('QR_READY');
+    this.emit('whatsapp:pairing_code', { code });
+
+    return { code };
+  }
+
   scheduleReconnect(delayMs = 2000) {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (!this.autoReconnect) return;
@@ -485,6 +536,7 @@ class WhatsAppSessionInstance {
     auth.clearSession(this.sessionId);
     this.latestQr = null;
     this.latestPairingCode = null;
+    this.isRegistered = false;
     this.realtimeChats.clear();
     this.realtimeMessages.clear();
     this.contactNames.clear();

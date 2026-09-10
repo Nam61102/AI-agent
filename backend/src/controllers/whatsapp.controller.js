@@ -15,7 +15,7 @@ async function connect(req, res) {
   } catch (error) {
     return res.status(500).json({
       success: false,
-      error: error.message
+      error: error?.message || 'Failed to generate pairing code'
     });
   }
 }
@@ -36,9 +36,10 @@ async function requestPairingCode(req, res) {
       sessionId
     });
   } catch (error) {
+    console.error('[WhatsAppController] Pairing code request failed:', error?.stack || error);
     return res.status(500).json({
       success: false,
-      error: error.message
+      error: error?.message || 'Failed to generate pairing code'
     });
   }
 }

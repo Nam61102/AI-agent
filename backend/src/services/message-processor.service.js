@@ -228,6 +228,17 @@ class MessageProcessorService {
           confidence || 0.95
         ]);
 
+        // Trigger Push Notification for high priority extractions
+        if (category === 'needs_action' || subtype === 'urgent' || subtype === 'important_conversation' || subtype === 'meeting') {
+          const pushService = require('./push.service');
+          const contactName = contact.name || message.chat_jid.split('@')[0];
+          await pushService.sendPushNotification(
+            accountJid, 
+            `Action Needed: ${contactName}`, 
+            whatMatters || 'Urgent message requires your attention'
+          );
+        }
+
         return { success: true };
       } else {
         console.log(`[AI Engine] Message ${message.id} filtered out (casual chatter / low value).`);

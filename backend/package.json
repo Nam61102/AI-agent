@@ -16,6 +16,7 @@
     "@whiskeysockets/baileys": "^6.7.24",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "expo-server-sdk": "^6.1.0",
     "express": "^5.2.1",
     "node-cron": "^4.6.0",
     "openai": "^6.49.0",
