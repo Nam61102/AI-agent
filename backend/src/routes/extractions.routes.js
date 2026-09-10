@@ -24,7 +24,8 @@ router.get('/', async (req, res) => {
       LEFT JOIN contacts chat ON chat.jid = m.chat_jid AND chat.account_jid = $1
       LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending' AND sr.account_jid = $1
       WHERE e.account_jid = $1
-      AND e.type != 'none' AND e.confidence >= 0.70`;
+      AND e.type NOT IN ('none', 'ai_auto_reply') 
+      AND e.confidence >= 0.85`;
     
     const values = [accountJid];
     let paramIndex = 2;
@@ -81,7 +82,7 @@ router.get('/:id', async (req, res) => {
        LEFT JOIN contacts sender ON sender.jid = m.sender_jid AND sender.account_jid = $2
        LEFT JOIN contacts chat ON chat.jid = m.chat_jid AND chat.account_jid = $2
        LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending' AND sr.account_jid = $2
-       WHERE e.id = $1 AND e.account_jid = $2 AND e.type != 'none'`,
+       WHERE e.id = $1 AND e.account_jid = $2 AND e.type NOT IN ('none', 'ai_auto_reply')`,
       [id, accountJid]
     );
 
