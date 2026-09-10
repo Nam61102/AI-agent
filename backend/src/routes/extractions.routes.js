@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
       LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending' AND sr.account_jid = $1
       WHERE e.account_jid = $1
       AND e.type NOT IN ('none', 'ai_auto_reply') 
-      AND e.confidence >= 0.85`;
+      AND e.confidence >= 0.90`;
     
     const values = [accountJid];
     let paramIndex = 2;
@@ -46,9 +46,33 @@ router.get('/', async (req, res) => {
     query += ' ORDER BY e.extracted_at DESC';
 
     const result = await supabase.query(query, values);
-    const validRows = result.rows;
+    
+    // Deduplicate by 'what_matters' to remove "same meaning" extractions
+    const seenMeanings = new Set();
+    const uniqueRows = [];
+    
+    for (const row of result.rows) {
+      let meaningStr = '';
+      if (row.payload && row.payload.what_matters) {
+        meaningStr = row.payload.what_matters.toLowerCase().trim();
+      } else if (row.title) {
+        meaningStr = row.title.toLowerCase().trim();
+      } else {
+        meaningStr = row.id.toString();
+      }
+      
+      // Aggressive normalization (strip spaces and punctuation) to catch slight variations
+      const normalizedStr = meaningStr.replace(/[^a-z0-9]/g, '');
+      
+      if (normalizedStr && !seenMeanings.has(normalizedStr)) {
+        seenMeanings.add(normalizedStr);
+        uniqueRows.push(row);
+      } else if (!normalizedStr) {
+        uniqueRows.push(row);
+      }
+    }
 
-    const formattedData = validRows.map(row => {
+    const formattedData = uniqueRows.map(row => {
       row.chat_name = row.db_chat_name || (row.chat_jid && row.chat_jid.endsWith('@g.us') ? 'Group' : formatPhoneNumber(row.chat_jid ? row.chat_jid.split('@')[0] : ''));
       row.sender_name = row.from_me ? 'You' : (row.db_sender_name || formatPhoneNumber(row.sender_jid ? row.sender_jid.split('@')[0] : ''));
       return row;
