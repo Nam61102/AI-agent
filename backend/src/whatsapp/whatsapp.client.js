@@ -1,6 +1,5 @@
 const {
   default: makeWASocket,
-  Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
@@ -202,7 +201,7 @@ class WhatsAppSessionInstance {
         auth: state,
         logger: this.logger,
         printQRInTerminal: false,
-        browser: Browsers.windows('Chrome'),
+        browser: ['NRYN AI', 'Chrome', '124.0.0'],
         syncFullHistory: true,
         shouldSyncHistoryMessage: () => true,
         generateHighQualityLinkPreview: false,
@@ -474,21 +473,13 @@ class WhatsAppSessionInstance {
       await this.connect();
     }
 
-    const deadline = Date.now() + 20000;
+    const deadline = Date.now() + 15000;
     while (!this.socket && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
 
     if (!this.socket || typeof this.socket.requestPairingCode !== 'function') {
       throw new Error('WhatsApp connection is not ready for pairing. Please try again.');
-    }
-
-    while (this.socket && this.status !== 'QR_READY' && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 250));
-    }
-
-    if (!this.socket || this.status !== 'QR_READY') {
-      throw new Error('WhatsApp is still preparing the pairing session. Please try again.');
     }
 
     const socketWarmupRemaining = 3000 - (Date.now() - this.socketCreatedAt);
