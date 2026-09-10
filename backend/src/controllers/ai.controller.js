@@ -356,7 +356,7 @@ async function getDashboardSummary(req, res) {
       supabase.query(`SELECT COUNT(*) FROM messages WHERE account_jid = $1 AND timestamp >= NOW() - INTERVAL '24 hours'`, [accountJid]),
       supabase.query(`SELECT COUNT(*) FROM suggested_replies WHERE account_jid = $1 AND created_at >= NOW() - INTERVAL '24 hours'`, [accountJid]),
       supabase.query(`SELECT COUNT(DISTINCT chat_jid) FROM messages WHERE account_jid = $1 AND timestamp >= NOW() - INTERVAL '24 hours'`, [accountJid]),
-      supabase.query(`SELECT COUNT(DISTINCT COALESCE(payload->>'what_matters', title)) FROM extractions WHERE account_jid = $1 AND status = 'active' AND type NOT IN ('none', 'ai_auto_reply') AND confidence >= 0.90`, [accountJid])
+      supabase.query(`SELECT COUNT(DISTINCT COALESCE(payload->>'what_matters', payload->>'description', payload->>'title', type)) FROM extractions WHERE account_jid = $1 AND status = 'active' AND type NOT IN ('none', 'ai_auto_reply') AND confidence >= 0.90`, [accountJid])
     ]);
 
     return res.status(200).json({
