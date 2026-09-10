@@ -1,32 +1,45 @@
 import { useState, useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
-import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import { getAuthHeaders } from '../services/session.service';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string || 'http://localhost:3000';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+let Device: any = null;
+let Notifications: any = null;
+
+if (Platform.OS !== 'web') {
+  try {
+    Device = require('expo-device');
+    Notifications = require('expo-notifications');
+    
+    if (Notifications?.setNotificationHandler) {
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowAlert: true,
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: true,
+        }),
+      });
+    }
+  } catch (e) {
+    console.warn('Push notification native packages not available:', e);
+  }
+}
 
 export function usePushNotifications() {
   const [expoPushToken, setExpoPushToken] = useState<string>('');
-  const [notification, setNotification] = useState<Notifications.Notification | false>(false);
-  const notificationListener = useRef<Notifications.Subscription>();
-  const responseListener = useRef<Notifications.Subscription>();
+  const [notification, setNotification] = useState<any>(false);
+  const notificationListener = useRef<any>();
+  const responseListener = useRef<any>();
 
   useEffect(() => {
+    if (Platform.OS === 'web' || !Notifications) return;
+
     registerForPushNotificationsAsync().then(token => {
       if (token) {
         setExpoPushToken(token);
-        // Send token to backend
         fetch(`${BACKEND_URL}/api/alerts/push-token`, {
           method: 'POST',
           headers: {
@@ -38,17 +51,21 @@ export function usePushNotifications() {
       }
     });
 
-    notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
-      setNotification(notification);
-    });
+    if (Notifications.addNotificationReceivedListener) {
+      notificationListener.current = Notifications.addNotificationReceivedListener((notification: any) => {
+        setNotification(notification);
+      });
+    }
 
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
-      console.log('Notification Response:', response);
-    });
+    if (Notifications.addNotificationResponseReceivedListener) {
+      responseListener.current = Notifications.addNotificationResponseReceivedListener((response: any) => {
+        console.log('Notification Response:', response);
+      });
+    }
 
     return () => {
-      if (notificationListener.current) notificationListener.current.remove();
-      if (responseListener.current) responseListener.current.remove();
+      if (notificationListener.current?.remove) notificationListener.current.remove();
+      if (responseListener.current?.remove) responseListener.current.remove();
     };
   }, []);
 
@@ -56,6 +73,7 @@ export function usePushNotifications() {
 }
 
 async function registerForPushNotificationsAsync() {
+  if (Platform.OS === 'web' || !Notifications || !Device) return;
   let token;
 
   if (Platform.OS === 'android') {
@@ -80,7 +98,7 @@ async function registerForPushNotificationsAsync() {
     }
     try {
       token = (await Notifications.getExpoPushTokenAsync({
-        projectId: 'your-project-id', // Optional: works without it in dev
+        projectId: 'your-project-id',
       })).data;
     } catch (e) {
       console.log('Error getting push token:', e);
