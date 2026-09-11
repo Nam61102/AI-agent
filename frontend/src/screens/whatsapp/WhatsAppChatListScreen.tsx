@@ -106,10 +106,22 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({
 
     const unsubscribe = whatsappService.subscribe({
       onRealtimeChats: (realtimeChats) => {
-        const recentChats = (realtimeChats || []).filter((c: any) => {
+        if (!realtimeChats || realtimeChats.length === 0) return;
+        const recentChats = realtimeChats.filter((c: any) => {
           return c.last_message_text && c.last_message_text !== 'Tap to start chat' && c.last_message_text.trim() !== '';
         });
-        setChats(formatChats(recentChats));
+        if (recentChats.length === 0) return;
+        
+        setChats(prev => {
+          const formatted = formatChats(recentChats);
+          const merged = [...formatted];
+          prev.forEach(p => {
+            if (!merged.find(m => m.jid.split('@')[0].split(':')[0] === p.jid.split('@')[0].split(':')[0])) {
+              merged.push(p);
+            }
+          });
+          return merged.sort((a, b) => b.raw_timestamp - a.raw_timestamp);
+        });
         setLoadingChats(false);
 
         // Auto-refresh active chat in real-time when new messages arrive
