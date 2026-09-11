@@ -193,17 +193,20 @@ class WhatsAppSessionInstance {
     try {
       const { state, saveCreds } = await auth.getAuthState(this.sessionId);
       this.isRegistered = Boolean(state.creds.registered);
+      const { version } = await fetchLatestBaileysVersion();
 
       console.log(`[WhatsAppSession:${this.sessionId}] Initializing WASocket`);
 
       this.socket = makeWASocket({
+        version,
         auth: state,
         logger: this.logger,
         printQRInTerminal: false,
-        browser: Browsers.macOS('Desktop'),
+        browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
+        shouldSyncHistoryMessage: () => false,
         generateHighQualityLinkPreview: false,
-        markOnlineOnConnect: false,
+        markOnlineOnConnect: true,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 15000,
@@ -481,6 +484,8 @@ class WhatsAppSessionInstance {
       this.socket = null;
     }
     auth.clearSession(this.sessionId);
+    this.isRegistered = false;
+    this.connectedJid = null;
     await this.connect();
 
     const deadline = Date.now() + 15000;
@@ -648,176 +653,6 @@ class WhatsAppSessionInstance {
     return sent;
   }
 
-  async requestPairingCode(phoneNumber) {
-    if (!phoneNumber) {
-      throw new Error('Phone number is required');
-    }
-
-    // Sanitize non-digits
-    let cleaned = String(phoneNumber).replace(/\D/g, '');
-
-    // Strip leading zeroes e.g. 09876543210 -> 9876543210
-    if (cleaned.startsWith('0')) {
-      cleaned = cleaned.replace(/^0+/, '');
-    }
-
-    // Default 10-digit Indian numbers without country code to '91'
-    if (cleaned.length === 10) {
-      cleaned = '91' + cleaned;
-    }
-
-    if (cleaned.length < 11 || cleaned.length > 15) {
-      throw new Error(`Invalid phone number length (${cleaned.length} digits). Please enter a valid 10-digit mobile number with country code e.g. +91 98765 43210.`);
-    }
-
-    // If already connected, return success status
-    if (this.socket && this.status === 'CONNECTED') {
-      throw new Error('WhatsApp is already connected for this session.');
-    }
-
-    console.log(`[WhatsAppSession:${this.sessionId}] Re-initializing pristine pairing session for phone: ${cleaned}`);
-
-    // Close any previous pending socket to prevent credential key mutations
-    if (this.socket) {
-      try {
-        this.socket.ev.removeAllListeners();
-        this.socket.end();
-      } catch (e) {}
-      this.socket = null;
-    }
-
-    // Clear stale un-registered auth state to ensure fresh Noise prekeys
-    auth.clearSession(this.sessionId);
-
-    this.isConnecting = true;
-    this.autoReconnect = false;
-    this.latestQr = null;
-    this.latestPairingCode = null;
-    this.updateStatus('CONNECTING');
-
-    const { state, saveCreds } = await auth.getAuthState(this.sessionId);
-    const { version } = await fetchLatestBaileysVersion();
-
-    this.socket = makeWASocket({
-      version,
-      auth: state,
-      logger: this.logger,
-      printQRInTerminal: false,
-      browser: Browsers.ubuntu('Chrome'),
-      syncFullHistory: false,
-      shouldSyncHistoryMessage: () => false,
-      generateHighQualityLinkPreview: false,
-      markOnlineOnConnect: true,
-      connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 15000,
-      msgRetryCounterCache: this.msgRetryCounterCache,
-      getMessage: async (key) => {
-        if (!key || !key.id) return undefined;
-        if (this.rawProtoMessages.has(key.id)) {
-          return this.rawProtoMessages.get(key.id);
-        }
-        try {
-          const supabase = require('../config/supabase');
-          const res = await supabase.query(
-            'SELECT text FROM messages WHERE whatsapp_message_id = $1 LIMIT 1',
-            [key.id]
-          );
-          if (res.rows.length > 0 && res.rows[0].text) {
-            const protoMsg = { conversation: res.rows[0].text };
-            this.rawProtoMessages.set(key.id, protoMsg);
-            return protoMsg;
-          }
-        } catch (err) {}
-        return undefined;
-      }
-    });
-
-    this.socket.ev.on('creds.update', saveCreds);
-
-    this.socket.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect } = update;
-      if (connection === 'open') {
-        this.isConnecting = false;
-        this.autoReconnect = true;
-        this.latestQr = null;
-        this.latestPairingCode = null;
-        
-        const rawConnectedId = this.socket?.user?.id || '';
-        const connectedJid = getCanonicalJid(rawConnectedId);
-        this.connectedJid = connectedJid;
-        console.log(`✓ [WhatsAppSession:${this.sessionId}] CONNECTED via Pairing Code as ${connectedJid}`);
-
-        auth.saveSessionOwner(this.sessionId, connectedJid);
-
-        try {
-          const dbContacts = await contactService.getAllContacts(connectedJid);
-          for (const c of dbContacts) {
-            if (c.jid && c.name) {
-              this.contactNames.set(getCanonicalJid(c.jid), c.name);
-            }
-          }
-        } catch (err) {}
-
-        this.updateStatus('CONNECTED');
-        this.emit('whatsapp:connected', { status: 'connected', user: connectedJid });
-      } else if (connection === 'close') {
-        this.isConnecting = false;
-        const statusCode = lastDisconnect?.error?.output?.statusCode || 
-                           lastDisconnect?.error?.output?.payload?.statusCode;
-        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-
-        if (isLoggedOut) {
-          console.log(`[WhatsAppSession:${this.sessionId}] Logged out by WhatsApp`);
-          auth.clearSession(this.sessionId);
-          this.socket = null;
-          this.connectedJid = null;
-          this.updateStatus('LOGGED_OUT');
-          this.emit('whatsapp:logged_out', { status: 'logged_out' });
-        } else {
-          console.log(`[WhatsAppSession:${this.sessionId}] Closed during pairing (code: ${statusCode}). Reconnecting in 1s to finalize session...`);
-          this.updateStatus('AUTHENTICATING');
-          this.scheduleReconnect(1000);
-        }
-      }
-    });
-
-    const handleContactUpdate = async (contactsList) => {
-      const accountJid = this.connectedJid || auth.getSessionOwner(this.sessionId) || 'default_user';
-      for (const c of contactsList) {
-        if (c.id && c.lid) {
-          registerLidMapping(c.lid, c.id);
-        }
-        if (c.id && (c.name || c.notify || c.verifiedName || c.pushname)) {
-          const canonical = getCanonicalJid(c.id);
-          const resolvedName = c.name || c.notify || c.verifiedName || c.pushname;
-          const isAddressBook = Boolean(c.name && c.name.trim() !== '');
-          if (resolvedName) {
-            this.contactNames.set(canonical, resolvedName);
-            try {
-              await contactService.findOrCreateContact({ jid: canonical, name: resolvedName, accountJid, isAddressBook });
-            } catch (err) {}
-          }
-        }
-      }
-    };
-
-    this.socket.ev.on('contacts.upsert', handleContactUpdate);
-    this.socket.ev.on('contacts.update', handleContactUpdate);
-
-    // Give socket brief delay to complete connection handshake before pairing request
-    await new Promise(r => setTimeout(r, 1200));
-
-    console.log(`[WhatsAppSession:${this.sessionId}] Submitting pairing code IQ request for: ${cleaned}`);
-    const rawCode = await this.socket.requestPairingCode(cleaned);
-    const formattedCode = rawCode?.match(/.{1,4}/g)?.join('-') || rawCode;
-    
-    this.latestPairingCode = formattedCode;
-    this.updateStatus('QR_READY');
-    this.emit('whatsapp:pairing_code', { pairingCode: formattedCode, rawPhoneNumber: phoneNumber, formattedPhoneNumber: cleaned });
-    
-    return { success: true, code: formattedCode };
-  }
 }
 
 class WhatsAppSessionManager {

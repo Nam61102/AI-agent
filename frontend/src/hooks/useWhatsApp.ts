@@ -30,8 +30,20 @@ export function useWhatsApp() {
       }
     });
 
+    const statusPoll = setInterval(() => {
+      const currentStatus = whatsappService.getStatus();
+      if (
+        currentStatus === 'CONNECTING' ||
+        currentStatus === 'QR_READY' ||
+        currentStatus === 'AUTHENTICATING'
+      ) {
+        whatsappService.checkStatus();
+      }
+    }, 2000);
+
     return () => {
       unsubscribe();
+      clearInterval(statusPoll);
     };
   }, []);
 
