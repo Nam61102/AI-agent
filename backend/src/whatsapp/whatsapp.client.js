@@ -509,21 +509,40 @@ class WhatsAppSessionInstance {
       throw new Error('WhatsApp connection is not ready for pairing. Please try again.');
     }
 
-    try {
-      // Baileys expects pairing to be requested on the fresh socket before its
-      // unauthenticated connection settles into the QR lifecycle.
-      const code = await this.socket.requestPairingCode(normalizedPhoneNumber);
-      this.latestPairingCode = code;
-      this.latestQr = null;
-      this.updateStatus('QR_READY');
-      this.emit('whatsapp:pairing_code', { code });
-      return { code };
-    } catch (pairingErr) {
-      console.error(`[WhatsAppSession:${this.sessionId}] Pairing code error:`, pairingErr.message);
-      if (pairingErr.message?.includes('429') || pairingErr.message?.includes('rate') || pairingErr.message?.includes('overlimit')) {
-        throw new Error('WhatsApp has temporarily rate-limited pairing codes for this phone number due to multiple recent attempts. Please scan the QR code tab instead to link instantly, or wait 15 minutes.');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        // Baileys expects pairing to be requested on the fresh socket before its
+        // unauthenticated connection settles into the QR lifecycle.
+        const code = await this.socket.requestPairingCode(normalizedPhoneNumber);
+        this.latestPairingCode = code;
+        this.latestQr = null;
+        this.updateStatus('QR_READY');
+        this.emit('whatsapp:pairing_code', { code });
+        return { code };
+      } catch (pairingErr) {
+        const message = pairingErr?.message || '';
+        const isClosedSocket = /connection closed|stream errored|socket closed/i.test(message);
+        if (attempt === 0 && isClosedSocket) {
+          console.warn(`[WhatsAppSession:${this.sessionId}] Pairing socket closed; rebuilding it once.`);
+          this.autoReconnect = false;
+          try {
+            this.socket?.ev.removeAllListeners();
+            this.socket?.end();
+          } catch (e) {}
+          this.socket = null;
+          auth.clearSession(this.sessionId);
+          this.isRegistered = false;
+          this.lastError = null;
+          await this.connect();
+          continue;
+        }
+
+        console.error(`[WhatsAppSession:${this.sessionId}] Pairing code error:`, message);
+        if (message.includes('429') || message.includes('rate') || message.includes('overlimit')) {
+          throw new Error('WhatsApp has temporarily rate-limited pairing codes for this phone number due to multiple recent attempts. Please scan the QR code tab instead to link instantly, or wait 15 minutes.');
+        }
+        throw pairingErr;
       }
-      throw pairingErr;
     }
   }
 
