@@ -28,7 +28,10 @@ async function requestPairingCode(req, res) {
       return res.status(400).json({ success: false, error: 'phoneNumber is required' });
     }
     const session = whatsappClient.getSession(sessionId);
-    const result = await session.requestPairingCode(phoneNumber);
+    const result = await Promise.race([
+      session.requestPairingCode(phoneNumber),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing request timed out. Please wait a moment and request a new code.')), 25000))
+    ]);
     return res.status(200).json({
       success: true,
       code: result.code,

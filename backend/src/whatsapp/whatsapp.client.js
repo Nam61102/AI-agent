@@ -195,12 +195,21 @@ class WhatsAppSessionInstance {
     try {
       const { state, saveCreds } = await auth.getAuthState(this.sessionId);
       this.isRegistered = Boolean(state.creds.registered);
-      const { version } = await fetchLatestBaileysVersion();
+      let version;
+      try {
+        const versionResult = await Promise.race([
+          fetchLatestBaileysVersion(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Baileys version lookup timed out')), 8000))
+        ]);
+        version = versionResult?.version;
+      } catch (versionError) {
+        console.warn(`[WhatsAppSession:${this.sessionId}] Using bundled Baileys version: ${versionError.message}`);
+      }
 
       console.log(`[WhatsAppSession:${this.sessionId}] Initializing WASocket`);
 
       this.socket = makeWASocket({
-        version,
+        ...(version ? { version } : {}),
         auth: state,
         logger: this.logger,
         printQRInTerminal: false,
