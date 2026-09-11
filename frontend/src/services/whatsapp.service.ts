@@ -29,6 +29,7 @@ class WhatsAppService {
   private currentStatus: ConnectionStatus = 'NOT_CONNECTED';
   private currentQR: string | null = null;
   private currentPairingCode: string | null = null;
+  private statusCheckInFlight = false;
   private isMockMode: boolean = false;
   private mockTimer: any = null;
 
@@ -194,6 +195,10 @@ class WhatsAppService {
   }
 
   public async checkStatus(): Promise<{ success: boolean; status: ConnectionStatus }> {
+    if (this.statusCheckInFlight) {
+      return { success: false, status: this.currentStatus };
+    }
+    this.statusCheckInFlight = true;
     try {
       const response = await fetch(`${BACKEND_URL}/api/whatsapp/status`, {
         headers: getAuthHeaders()
@@ -215,8 +220,13 @@ class WhatsAppService {
         }
         return { success: true, status: data.status };
       }
-    } catch (err) {
-      console.warn('[WhatsAppService] checkStatus error:', err);
+    } catch (err: any) {
+      const message = String(err?.message || err || '');
+      if (!message.toLowerCase().includes('network_io_suspended')) {
+        console.warn('[WhatsAppService] checkStatus error:', err);
+      }
+    } finally {
+      this.statusCheckInFlight = false;
     }
     return { success: false, status: this.currentStatus };
   }

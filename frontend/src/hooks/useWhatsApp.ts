@@ -30,7 +30,10 @@ export function useWhatsApp() {
       }
     });
 
-    const statusPoll = setInterval(() => {
+    const pollStatus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
       const currentStatus = whatsappService.getStatus();
       if (
         currentStatus === 'CONNECTING' ||
@@ -39,11 +42,24 @@ export function useWhatsApp() {
       ) {
         whatsappService.checkStatus();
       }
-    }, 2000);
+    };
+
+    const statusPoll = setInterval(pollStatus, 5000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        pollStatus();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
 
     return () => {
       unsubscribe();
       clearInterval(statusPoll);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
     };
   }, []);
 
