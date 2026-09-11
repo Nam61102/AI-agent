@@ -520,12 +520,9 @@ class WhatsAppSessionInstance {
       throw new Error('WhatsApp connection is not ready for pairing. Please try again.');
     }
 
-    const socketWarmupRemaining = 3000 - (Date.now() - this.socketCreatedAt);
-    if (socketWarmupRemaining > 0) {
-      await new Promise(resolve => setTimeout(resolve, socketWarmupRemaining));
-    }
-
     try {
+      // Baileys expects pairing to be requested on the fresh socket before its
+      // unauthenticated connection settles into the QR lifecycle.
       const code = await this.socket.requestPairingCode(normalizedPhoneNumber);
       this.latestPairingCode = code;
       this.latestQr = null;
