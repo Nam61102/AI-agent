@@ -1,8 +1,6 @@
 const {
   default: makeWASocket,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  Browsers
+  DisconnectReason
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const QRCode = require('qrcode');
@@ -195,25 +193,13 @@ class WhatsAppSessionInstance {
     try {
       const { state, saveCreds } = await auth.getAuthState(this.sessionId);
       this.isRegistered = Boolean(state.creds.registered);
-      let version;
-      try {
-        const versionResult = await Promise.race([
-          fetchLatestBaileysVersion(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Baileys version lookup timed out')), 8000))
-        ]);
-        version = versionResult?.version;
-      } catch (versionError) {
-        console.warn(`[WhatsAppSession:${this.sessionId}] Using bundled Baileys version: ${versionError.message}`);
-      }
 
       console.log(`[WhatsAppSession:${this.sessionId}] Initializing WASocket`);
 
       this.socket = makeWASocket({
-        ...(version ? { version } : {}),
         auth: state,
         logger: this.logger,
         printQRInTerminal: false,
-        browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
         shouldSyncHistoryMessage: () => false,
         generateHighQualityLinkPreview: false,
