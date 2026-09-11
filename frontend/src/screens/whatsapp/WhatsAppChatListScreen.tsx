@@ -106,11 +106,8 @@ export const WhatsAppChatListScreen: React.FC<WhatsAppChatListScreenProps> = ({
 
     const unsubscribe = whatsappService.subscribe({
       onRealtimeChats: (realtimeChats) => {
-        const sixHoursAgo = Date.now() - (6 * 60 * 60 * 1000);
-        const recentChats = realtimeChats.filter((c: any) => {
-          if (!c.last_message_text || c.last_message_text === 'Tap to start chat' || c.last_message_text.trim() === '') return false;
-          const msgTime = new Date(c.last_message_timestamp).getTime();
-          return msgTime >= sixHoursAgo;
+        const recentChats = (realtimeChats || []).filter((c: any) => {
+          return c.last_message_text && c.last_message_text !== 'Tap to start chat' && c.last_message_text.trim() !== '';
         });
         setChats(formatChats(recentChats));
         setLoadingChats(false);

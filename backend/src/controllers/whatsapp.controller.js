@@ -123,12 +123,19 @@ async function getChats(req, res) {
     const sessionId = req.sessionId || 'default';
     const accountJid = req.accountJid;
     const session = whatsappClient.getSession(sessionId);
+    const limitHours = req.query.hours ? parseInt(req.query.hours, 10) : 720;
+    const namesOnly = req.query.namesOnly === 'true' || req.query.names_only === 'true';
 
     const realtimeChats = session.getSortedChats();
-    const storedChats = await messageService.getChats(accountJid, 12);
+    const storedChats = await messageService.getChats(accountJid, limitHours, namesOnly);
     const chatsByJid = new Map(storedChats.map(chat => [chat.jid, chat]));
 
     for (const chat of realtimeChats) {
+      if (namesOnly) {
+        const isGroup = chat.jid && chat.jid.endsWith('@g.us');
+        const isPhoneOnly = /^[0-9+ ()\-\.\_]+$/.test(chat.name || '');
+        if (isPhoneOnly || !chat.name || chat.name === 'Unknown') continue;
+      }
       chatsByJid.set(chat.jid, chat);
     }
 
@@ -216,8 +223,9 @@ async function getCurrentContacts(req, res) {
 async function getRecentChats(req, res) {
   try {
     const accountJid = req.accountJid;
-    const limitHours = req.query.hours || 12;
-    const chats = await messageService.getChats(accountJid, limitHours);
+    const limitHours = req.query.hours ? parseInt(req.query.hours, 10) : 720;
+    const namesOnly = req.query.namesOnly === 'true' || req.query.names_only === 'true';
+    const chats = await messageService.getChats(accountJid, limitHours, namesOnly);
     return res.status(200).json({
       success: true,
       count: chats.length,

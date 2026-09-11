@@ -326,11 +326,15 @@ class WhatsAppService {
     }
   }
 
-  public async fetchChats(hours: number = 6): Promise<any[]> {
+  public async fetchChats(hours: number = 720, namesOnly: boolean = false): Promise<any[]> {
     if (this.isMockMode) return [];
 
     try {
-      const response = await fetch(`${BACKEND_URL}/api/whatsapp/recent-chats?hours=${hours}`, {
+      const queryParams = new URLSearchParams();
+      if (hours) queryParams.append('hours', String(hours));
+      if (namesOnly) queryParams.append('namesOnly', 'true');
+
+      const response = await fetch(`${BACKEND_URL}/api/whatsapp/chats?${queryParams.toString()}`, {
         headers: getAuthHeaders()
       });
       const data = await response.json();

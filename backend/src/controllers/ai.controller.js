@@ -68,10 +68,12 @@ async function getActions(req, res) {
         sr.reason,
         sr.tone
       FROM ai_actions a
-      LEFT JOIN contacts c ON a.contact_id = c.id
+      LEFT JOIN contacts c ON (c.jid = a.chat_jid OR c.id = a.contact_id) AND (c.account_jid = a.account_jid OR c.account_jid IS NULL)
       LEFT JOIN messages m ON a.source_message_id = m.id
       LEFT JOIN suggested_replies sr ON a.suggested_reply_id = sr.id
       WHERE a.status = $1 AND a.account_jid = $2
+        AND a.chat_jid NOT LIKE '%@newsletter'
+        AND a.chat_jid NOT LIKE '%@lid'
       ORDER BY a.created_at DESC
       LIMIT $3;
     `;
@@ -81,7 +83,10 @@ async function getActions(req, res) {
     const actions = result.rows.map(row => {
       const isGroup = row.chat_jid && row.chat_jid.endsWith('@g.us');
       const rawNumber = row.chat_jid ? row.chat_jid.split('@')[0] : '';
-      const contactName = row.db_contact_name || (isGroup ? 'Group' : formatPhoneNumber(rawNumber));
+      let contactName = row.db_contact_name;
+      if (!contactName || /^[0-9+\s().-]+$/.test(contactName.trim()) || contactName.includes('@')) {
+        contactName = isGroup ? 'Group' : formatPhoneNumber(rawNumber);
+      }
 
       // Derive category if null
       let category = row.category;
@@ -168,10 +173,12 @@ async function getIntelligence(req, res) {
         sr.reason,
         sr.tone
       FROM ai_actions a
-      LEFT JOIN contacts c ON a.contact_id = c.id
+      LEFT JOIN contacts c ON (c.jid = a.chat_jid OR c.id = a.contact_id) AND (c.account_jid = a.account_jid OR c.account_jid IS NULL)
       LEFT JOIN messages m ON a.source_message_id = m.id
       LEFT JOIN suggested_replies sr ON a.suggested_reply_id = sr.id
       WHERE a.status = $1 AND a.account_jid = $2
+        AND a.chat_jid NOT LIKE '%@newsletter'
+        AND a.chat_jid NOT LIKE '%@lid'
       ORDER BY a.created_at DESC;
     `;
 
@@ -187,7 +194,10 @@ async function getIntelligence(req, res) {
     const allItems = result.rows.map(row => {
       const isGroup = row.chat_jid && row.chat_jid.endsWith('@g.us');
       const rawNumber = row.chat_jid ? row.chat_jid.split('@')[0] : '';
-      const contactName = row.db_contact_name || (isGroup ? 'Group' : formatPhoneNumber(rawNumber));
+      let contactName = row.db_contact_name;
+      if (!contactName || /^[0-9+\s().-]+$/.test(contactName.trim()) || contactName.includes('@')) {
+        contactName = isGroup ? 'Group' : formatPhoneNumber(rawNumber);
+      }
 
       let cat = row.category;
       if (!cat || !categories[cat]) {

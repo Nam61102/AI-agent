@@ -29,6 +29,9 @@ async function findContactByJid(jid, accountJid) {
  * @param {string} [param0.accountJid]
  */
 async function createContact({ jid, name, accountJid }) {
+  if (!jid || jid.endsWith('@newsletter') || jid.endsWith('@lid') || jid === 'status@broadcast') {
+    return null;
+  }
   const isGroup = jid.endsWith('@g.us');
   const formattedName = name || (isGroup ? 'Group' : formatPhoneNumber(jid.split('@')[0]));
   const result = await supabase.query(

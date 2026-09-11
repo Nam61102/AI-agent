@@ -77,8 +77,8 @@ async function handleIncomingMessages(upsert, accountJid = 'default_user') {
       const rawChatJid = rawMsg.key?.remoteJid;
       const messageId = rawMsg.key?.id;
 
-      // Ignore broadcast status updates, protocol messages, or empty keys
-      if (!rawChatJid || !messageId || rawChatJid === 'status@broadcast' || (rawChatJid.endsWith('@g.us') && !rawMsg.message)) {
+      // Ignore broadcast status updates, protocol messages, newsletters, or empty keys
+      if (!rawChatJid || !messageId || rawChatJid === 'status@broadcast' || rawChatJid.endsWith('@newsletter') || rawChatJid.endsWith('@lid') || (rawChatJid.endsWith('@g.us') && !rawMsg.message)) {
         continue;
       }
 

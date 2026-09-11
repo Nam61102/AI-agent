@@ -74,12 +74,17 @@ async function saveMessage(msg) {
 /**
  * Fetch active chats for account_jid ordered by timestamp DESC
  */
-async function getChats(accountJid, limitHours = 12) {
+async function getChats(accountJid, limitHours = 720, namesOnly = false) {
   const params = [];
   let accountFilter = '';
   if (accountJid) {
     params.push(accountJid);
     accountFilter = `AND account_jid = $${params.length}`;
+  }
+
+  let timeFilter = '';
+  if (limitHours && limitHours > 0) {
+    timeFilter = `AND timestamp >= NOW() - INTERVAL '${parseInt(limitHours)} hours'`;
   }
 
   const query = `
@@ -96,7 +101,7 @@ async function getChats(accountJid, limitHours = 12) {
       WHERE chat_jid NOT LIKE '%@newsletter'
         AND chat_jid NOT LIKE '%@lid'
         ${accountFilter}
-        AND timestamp >= NOW() - INTERVAL '${parseInt(limitHours)} hours'
+        ${timeFilter}
       ORDER BY chat_jid, timestamp DESC
     ) m
     LEFT JOIN contacts c ON m.chat_jid = c.jid AND (m.account_jid = c.account_jid OR c.account_jid IS NULL)
@@ -106,13 +111,15 @@ async function getChats(accountJid, limitHours = 12) {
 
   try {
     const result = await supabase.query(query, params);
-    return result.rows.map(row => {
+    const chats = result.rows.map(row => {
       let finalName = row.db_name;
       const canonical = getCanonicalJid(row.jid);
       const isGroup = canonical.endsWith('@g.us');
       const rawNum = canonical.split('@')[0];
 
-      if (!finalName || /^\d+$/.test(finalName) || finalName.includes('@')) {
+      const hasValidDbName = Boolean(finalName && finalName.trim() !== '' && !/^[0-9+\s().-]+$/.test(finalName.trim()) && !finalName.includes('@') && finalName !== 'Group' && finalName !== 'Unknown');
+
+      if (!hasValidDbName) {
         if (isGroup) {
           finalName = finalName || 'Group';
         } else {
@@ -126,9 +133,16 @@ async function getChats(accountJid, limitHours = 12) {
         is_group: row.is_group,
         last_message_text: row.last_message_text || '',
         last_message_timestamp: row.last_message_timestamp,
-        needs_reply: row.needs_reply
+        needs_reply: row.needs_reply,
+        has_real_name: hasValidDbName
       };
     });
+
+    if (namesOnly) {
+      return chats.filter(c => c.has_real_name || (c.is_group && c.name && c.name !== 'Group'));
+    }
+
+    return chats;
   } catch (error) {
     console.error('[MessageService] Error fetching chats:', error.message);
     return [];

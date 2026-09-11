@@ -68,6 +68,7 @@ router.get('/all', async (req, res) => {
         AND TRIM(c.name) != ''
         AND c.name != 'Group'
         AND c.name != 'Unknown'
+        AND c.name !~ '^[0-9+\\s().-]+$'
     `;
     
     if (search) {
@@ -109,7 +110,6 @@ router.get('/top', async (req, res) => {
       INNER JOIN messages m
         ON c.jid = m.chat_jid
        AND m.account_jid = c.account_jid
-       AND m.timestamp >= NOW() - INTERVAL '7 days'
       WHERE c.account_jid = $1
         AND c.jid NOT LIKE '%@g.us'
         AND c.jid NOT LIKE '%@newsletter'
@@ -118,8 +118,8 @@ router.get('/top', async (req, res) => {
         AND TRIM(c.name) != ''
         AND c.name != 'Group'
         AND c.name != 'Unknown'
+        AND c.name !~ '^[0-9+\\s().-]+$'
       GROUP BY c.id
-      HAVING COALESCE(NULLIF(c.relationship_score, 0), LEAST(COUNT(m.id), 100)) > 50
       ORDER BY COALESCE(NULLIF(c.relationship_score, 0), LEAST(COUNT(m.id), 100)) DESC,
                message_count DESC
       LIMIT $2

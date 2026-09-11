@@ -25,7 +25,8 @@ router.get('/', async (req, res) => {
       LEFT JOIN suggested_replies sr ON sr.source_message_id = m.id AND sr.status = 'pending' AND sr.account_jid = $1
       WHERE e.account_jid = $1
       AND e.type NOT IN ('none', 'ai_auto_reply') 
-      AND e.confidence >= 0.90`;
+      AND e.confidence >= 0.90
+      AND (m.chat_jid IS NULL OR (m.chat_jid NOT LIKE '%@newsletter' AND m.chat_jid NOT LIKE '%@lid'))`;
     
     const values = [accountJid];
     let paramIndex = 2;
