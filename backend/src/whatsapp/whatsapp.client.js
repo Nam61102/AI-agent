@@ -177,8 +177,10 @@ class WhatsAppSessionInstance {
 
     if (this.socket) {
       try {
-        this.socket.ev.removeAllListeners();
-        this.socket.end();
+        this.socket.ev.removeAllListeners('connection.update');
+        if (typeof this.socket.end === 'function') {
+          this.socket.end();
+        }
       } catch (e) {}
       this.socket = null;
     }
@@ -201,9 +203,8 @@ class WhatsAppSessionInstance {
         logger: this.logger,
         printQRInTerminal: false,
         syncFullHistory: false,
-        shouldSyncHistoryMessage: () => false,
         generateHighQualityLinkPreview: false,
-        markOnlineOnConnect: true,
+        markOnlineOnConnect: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 15000,
