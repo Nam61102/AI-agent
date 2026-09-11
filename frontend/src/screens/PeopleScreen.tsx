@@ -134,8 +134,17 @@ export const PeopleScreen: React.FC<PeopleScreenProps> = ({
 
     // Fetch Relationship score breakdown
     contactService.getRelationshipData(contact.jid).then(data => {
-      if (data && data.success) {
+      if (data && data.success && data.factors && Object.keys(data.factors).length > 0) {
         setRelationshipData(data);
+      } else {
+        // Trigger live relationship analysis if no existing metrics found
+        contactService.analyzeRelationship(contact.jid).then(analyzeRes => {
+          if (analyzeRes.success) {
+            contactService.getRelationshipData(contact.jid).then(newData => {
+              if (newData && newData.success) setRelationshipData(newData);
+            });
+          }
+        }).catch(err => console.error('Failed to trigger relationship analysis', err));
       }
     }).catch(e => console.error('Failed to load relationship data', e));
 

@@ -39,6 +39,14 @@ export const contactService = {
     const json = await res.json();
     return json;
   },
+  analyzeRelationship: async (jid: string) => {
+    const res = await fetch(`${API_BASE_URL}/relationship/${encodeURIComponent(jid)}/analyze`, {
+      method: 'POST',
+      headers: getAuthHeaders()
+    });
+    const json = await res.json();
+    return json;
+  },
   getAlerts: async () => {
     const res = await fetch(`${API_BASE_URL}/alerts`, {
       headers: getAuthHeaders()

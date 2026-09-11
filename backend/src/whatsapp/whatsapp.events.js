@@ -168,6 +168,19 @@ async function handleIncomingMessages(upsert, accountJid = 'default_user') {
       console.error('[WhatsAppEvents] Error processing message:', err.message);
     }
   }
+
+  // If this was a history sync chunk, kick off the background backfill processor
+  if (upsert && upsert.isHistorySync) {
+    try {
+      const messageProcessor = require('../services/message-processor.service');
+      // Fire and forget: process up to 500 messages from the last 24h
+      messageProcessor.processPendingMessages(500, accountJid).catch(err => {
+         console.error('[WhatsAppEvents] Error backfilling history messages:', err.message);
+      });
+    } catch (err) {
+      console.error('[WhatsAppEvents] Failed to start history backfill:', err.message);
+    }
+  }
 }
 
 module.exports = {

@@ -34,6 +34,7 @@ class MessageProcessorService {
         AND m.from_me = false
         AND NULLIF(TRIM(m.text), '') IS NOT NULL
         ${accountFilter}
+        AND m.timestamp >= NOW() - INTERVAL '24 hours'
         AND NOT EXISTS (
           SELECT 1 FROM ai_actions a WHERE a.source_message_id = m.id
         )
