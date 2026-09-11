@@ -25,7 +25,7 @@ async function requestPairingCode(req, res) {
     const sessionId = req.sessionId || 'default';
     const { phoneNumber } = req.body;
     if (!phoneNumber) {
-      return res.status(400).json({ success: false, error: 'phoneNumber is required' });
+      return res.status(400).json({ success: false, status: 'ERROR', error: 'phoneNumber is required' });
     }
     const session = whatsappClient.getSession(sessionId);
     const result = await session.requestPairingCode(phoneNumber);
@@ -37,8 +37,10 @@ async function requestPairingCode(req, res) {
     });
   } catch (error) {
     console.error('[WhatsAppController] Pairing code request failed:', error?.stack || error);
-    return res.status(500).json({
+    const isRateLimit = error?.message?.includes('rate-limit') || error?.message?.includes('429') || error?.message?.includes('overlimit');
+    return res.status(isRateLimit ? 429 : 500).json({
       success: false,
+      status: isRateLimit ? 'RATE_LIMITED' : 'ERROR',
       error: error?.message || 'Failed to generate pairing code'
     });
   }
