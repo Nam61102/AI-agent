@@ -273,7 +273,7 @@ class WhatsAppService {
       return { success: true, code: mockCode };
     }
 
-    try {
+    const requestCode = async () => {
       const response = await fetch(`${BACKEND_URL}/api/whatsapp/pairing-code`, {
         method: 'POST',
         headers: {
@@ -282,7 +282,17 @@ class WhatsAppService {
         },
         body: JSON.stringify({ phoneNumber })
       });
-      const data = await response.json();
+      return { response, data: await response.json() };
+    };
+
+    try {
+      let { response, data } = await requestCode();
+      const transientError = String(data?.error || '').toLowerCase();
+      if (!response.ok && /connection closed|stream errored|socket closed|pairing request timed out/.test(transientError)) {
+        const newSessionId = resetSessionId();
+        this.socket?.emit('whatsapp:join_session', { sessionId: newSessionId });
+        ({ response, data } = await requestCode());
+      }
       if (data.success && data.code) {
         this.currentPairingCode = data.code;
         this.updateStatus('QR_READY');
