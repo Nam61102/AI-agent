@@ -478,11 +478,14 @@ class WhatsAppSessionInstance {
       throw new Error('Enter a valid phone number with country code (e.g. 917038128870 or 7038128870).');
     }
 
-    if (this.isRegistered || this.status === 'CONNECTED') {
+    // A stale auth directory can report registered even when the socket is dead.
+    // Only refuse pairing when this session is genuinely connected.
+    if (this.socket && this.status === 'CONNECTED') {
       throw new Error('WhatsApp is already connected for this session.');
     }
 
     // Always clear unauthenticated session state and initialize a clean socket for pairing code
+    this.autoReconnect = false;
     if (this.socket) {
       try {
         this.socket.ev.removeAllListeners();
