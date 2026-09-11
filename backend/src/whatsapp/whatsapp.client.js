@@ -471,10 +471,11 @@ class WhatsAppSessionInstance {
 
   async requestPairingCode(phoneNumber) {
     let normalizedPhoneNumber = String(phoneNumber || '').replace(/\D/g, '');
+    normalizedPhoneNumber = normalizedPhoneNumber.replace(/^0+/, '');
     if (normalizedPhoneNumber.length === 10) {
       normalizedPhoneNumber = '91' + normalizedPhoneNumber;
     }
-    if (normalizedPhoneNumber.length < 10 || normalizedPhoneNumber.length > 15) {
+    if (normalizedPhoneNumber.length < 11 || normalizedPhoneNumber.length > 15) {
       throw new Error('Enter a valid phone number with country code (e.g. 917038128870 or 7038128870).');
     }
 
