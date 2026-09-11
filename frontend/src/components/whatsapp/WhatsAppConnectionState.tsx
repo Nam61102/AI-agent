@@ -47,6 +47,9 @@ export const WhatsAppConnectionState: React.FC<WhatsAppConnectionStateProps> = (
 
   const handleGetPairingCode = async () => {
     let cleanPhone = phoneNumber.replace(/\D/g, '');
+    if (cleanPhone.startsWith('0')) {
+      cleanPhone = cleanPhone.replace(/^0+/, '');
+    }
     if (cleanPhone.length === 10) {
       cleanPhone = '91' + cleanPhone;
     }

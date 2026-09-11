@@ -252,6 +252,25 @@ class WhatsAppService {
     return { success: false, status: 'ERROR', requiresScan: false };
   }
 
+  private pollingTimer: any = null;
+
+  public startPollingStatus(intervalMs: number = 3000) {
+    this.stopPollingStatus();
+    this.pollingTimer = setInterval(async () => {
+      const res = await this.checkStatus();
+      if (res.status === 'CONNECTED' || res.status === 'ERROR' || res.status === 'LOGGED_OUT') {
+        this.stopPollingStatus();
+      }
+    }, intervalMs);
+  }
+
+  public stopPollingStatus() {
+    if (this.pollingTimer) {
+      clearInterval(this.pollingTimer);
+      this.pollingTimer = null;
+    }
+  }
+
   public async requestPairingCode(phoneNumber: string): Promise<{ success: boolean; code?: string; error?: string }> {
     if (this.isMockMode) {
       const mockCode = '1234-5678';
@@ -274,6 +293,7 @@ class WhatsAppService {
         this.currentPairingCode = data.code;
         this.updateStatus('QR_READY');
         this.notifyPairingCode(data.code);
+        this.startPollingStatus(3000);
         return { success: true, code: data.code };
       } else {
         return { success: false, error: data.error || 'Failed to generate pairing code' };
