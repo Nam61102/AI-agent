@@ -24,6 +24,8 @@ class WhatsAppSessionInstance {
     this.socketCreatedAt = 0;
     this.autoReconnect = true;
     this.reconnectTimer = null;
+    this.reconnectAttempts = 0;
+    this.lastError = null;
     this.logger = pino({ level: 'silent' });
     this.connectedJid = auth.getSessionOwner(sessionId) || null;
 
@@ -262,6 +264,8 @@ class WhatsAppSessionInstance {
           }
         } else if (connection === 'open') {
           this.isConnecting = false;
+          this.reconnectAttempts = 0;
+          this.lastError = null;
           if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
@@ -309,9 +313,17 @@ class WhatsAppSessionInstance {
           } else {
             const isRestart = statusCode === DisconnectReason.restartRequired || statusCode === 515;
             const delay = isRestart ? 100 : 2000;
-            console.log(`[WhatsAppSession:${this.sessionId}] Closed (code: ${statusCode}). Reconnecting in ${delay}ms...`);
-            this.updateStatus('AUTHENTICATING');
-            this.scheduleReconnect(delay);
+            this.reconnectAttempts += 1;
+            const closeMessage = lastDisconnect?.error?.message || `WhatsApp connection closed (code: ${statusCode || 'unknown'})`;
+            console.warn(`[WhatsAppSession:${this.sessionId}] ${closeMessage}. Reconnect attempt ${this.reconnectAttempts}/5.`);
+            if (this.reconnectAttempts >= 5) {
+              this.lastError = `${closeMessage}. Pairing did not complete. Request a new code and try again.`;
+              this.updateStatus('ERROR');
+              this.emit('whatsapp:error', { message: this.lastError });
+            } else {
+              this.updateStatus('AUTHENTICATING');
+              this.scheduleReconnect(delay);
+            }
           }
         }
       });
@@ -486,6 +498,8 @@ class WhatsAppSessionInstance {
     auth.clearSession(this.sessionId);
     this.isRegistered = false;
     this.connectedJid = null;
+    this.reconnectAttempts = 0;
+    this.lastError = null;
     await this.connect();
 
     const deadline = Date.now() + 15000;

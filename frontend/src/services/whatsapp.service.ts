@@ -201,6 +201,9 @@ class WhatsAppService {
       const data = await response.json();
       if (data.success && data.status) {
         this.updateStatus(data.status);
+        if (data.status === 'ERROR' && data.error) {
+          this.notifyError(data.error);
+        }
         if (data.status === 'QR_READY') {
           // Fetch QR
           const qrRes = await fetch(`${BACKEND_URL}/api/whatsapp/qr`, { headers: getAuthHeaders() });

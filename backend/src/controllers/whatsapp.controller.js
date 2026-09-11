@@ -52,6 +52,7 @@ async function getStatus(req, res) {
       success: true,
       status: session.status,
       user: session.connectedJid || null,
+      error: session.lastError || null,
       sessionId
     });
   } catch (error) {
