@@ -1,8 +1,6 @@
 const {
   default: makeWASocket,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  Browsers
+  DisconnectReason
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const QRCode = require('qrcode');
@@ -24,6 +22,8 @@ class WhatsAppSessionInstance {
     this.socketCreatedAt = 0;
     this.autoReconnect = true;
     this.reconnectTimer = null;
+    this.reconnectAttempts = 0;
+    this.lastError = null;
     this.logger = pino({ level: 'silent' });
     this.connectedJid = auth.getSessionOwner(sessionId) || null;
 
@@ -200,10 +200,10 @@ class WhatsAppSessionInstance {
         auth: state,
         logger: this.logger,
         printQRInTerminal: false,
-        browser: Browsers.macOS('Desktop'),
         syncFullHistory: false,
+        shouldSyncHistoryMessage: () => false,
         generateHighQualityLinkPreview: false,
-        markOnlineOnConnect: false,
+        markOnlineOnConnect: true,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 15000,
@@ -259,6 +259,8 @@ class WhatsAppSessionInstance {
           }
         } else if (connection === 'open') {
           this.isConnecting = false;
+          this.reconnectAttempts = 0;
+          this.lastError = null;
           if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
@@ -306,9 +308,17 @@ class WhatsAppSessionInstance {
           } else {
             const isRestart = statusCode === DisconnectReason.restartRequired || statusCode === 515;
             const delay = isRestart ? 100 : 2000;
-            console.log(`[WhatsAppSession:${this.sessionId}] Closed (code: ${statusCode}). Reconnecting in ${delay}ms...`);
-            this.updateStatus('AUTHENTICATING');
-            this.scheduleReconnect(delay);
+            this.reconnectAttempts += 1;
+            const closeMessage = lastDisconnect?.error?.message || `WhatsApp connection closed (code: ${statusCode || 'unknown'})`;
+            console.warn(`[WhatsAppSession:${this.sessionId}] ${closeMessage}. Reconnect attempt ${this.reconnectAttempts}/5.`);
+            if (this.reconnectAttempts >= 5) {
+              this.lastError = `${closeMessage}. Pairing did not complete. Request a new code and try again.`;
+              this.updateStatus('ERROR');
+              this.emit('whatsapp:error', { message: this.lastError });
+            } else {
+              this.updateStatus('AUTHENTICATING');
+              this.scheduleReconnect(delay);
+            }
           }
         }
       });
@@ -470,15 +480,18 @@ class WhatsAppSessionInstance {
     if (normalizedPhoneNumber.length === 10) {
       normalizedPhoneNumber = '91' + normalizedPhoneNumber;
     }
-    if (normalizedPhoneNumber.length < 10 || normalizedPhoneNumber.length > 15) {
+    if (normalizedPhoneNumber.length < 11 || normalizedPhoneNumber.length > 15) {
       throw new Error('Enter a valid phone number with country code (e.g. 917038128870 or 7038128870).');
     }
 
-    if (this.isRegistered || this.status === 'CONNECTED') {
+    // A stale auth directory can report registered even when the socket is dead.
+    // Only refuse pairing when this session is genuinely connected.
+    if (this.socket && this.status === 'CONNECTED') {
       throw new Error('WhatsApp is already connected for this session.');
     }
 
     // Always clear unauthenticated session state and initialize a clean socket for pairing code
+    this.autoReconnect = false;
     if (this.socket) {
       try {
         this.socket.ev.removeAllListeners();
@@ -487,6 +500,10 @@ class WhatsAppSessionInstance {
       this.socket = null;
     }
     auth.clearSession(this.sessionId);
+    this.isRegistered = false;
+    this.connectedJid = null;
+    this.reconnectAttempts = 0;
+    this.lastError = null;
     await this.connect();
 
     const deadline = Date.now() + 15000;

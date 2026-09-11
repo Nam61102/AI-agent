@@ -30,8 +30,36 @@ export function useWhatsApp() {
       }
     });
 
+    const pollStatus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
+      const currentStatus = whatsappService.getStatus();
+      if (
+        currentStatus === 'CONNECTING' ||
+        currentStatus === 'QR_READY' ||
+        currentStatus === 'AUTHENTICATING'
+      ) {
+        whatsappService.checkStatus();
+      }
+    };
+
+    const statusPoll = setInterval(pollStatus, 5000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        pollStatus();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
     return () => {
       unsubscribe();
+      clearInterval(statusPoll);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
     };
   }, []);
 

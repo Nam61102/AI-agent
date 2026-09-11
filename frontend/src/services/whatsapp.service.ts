@@ -29,6 +29,7 @@ class WhatsAppService {
   private currentStatus: ConnectionStatus = 'NOT_CONNECTED';
   private currentQR: string | null = null;
   private currentPairingCode: string | null = null;
+  private statusCheckInFlight = false;
   private isMockMode: boolean = false;
   private mockTimer: any = null;
 
@@ -194,6 +195,10 @@ class WhatsAppService {
   }
 
   public async checkStatus(): Promise<{ success: boolean; status: ConnectionStatus }> {
+    if (this.statusCheckInFlight) {
+      return { success: false, status: this.currentStatus };
+    }
+    this.statusCheckInFlight = true;
     try {
       const response = await fetch(`${BACKEND_URL}/api/whatsapp/status`, {
         headers: getAuthHeaders()
@@ -201,6 +206,9 @@ class WhatsAppService {
       const data = await response.json();
       if (data.success && data.status) {
         this.updateStatus(data.status);
+        if (data.status === 'ERROR' && data.error) {
+          this.notifyError(data.error);
+        }
         if (data.status === 'QR_READY') {
           // Fetch QR
           const qrRes = await fetch(`${BACKEND_URL}/api/whatsapp/qr`, { headers: getAuthHeaders() });
@@ -212,8 +220,13 @@ class WhatsAppService {
         }
         return { success: true, status: data.status };
       }
-    } catch (err) {
-      console.warn('[WhatsAppService] checkStatus error:', err);
+    } catch (err: any) {
+      const message = String(err?.message || err || '');
+      if (!message.toLowerCase().includes('network_io_suspended')) {
+        console.warn('[WhatsAppService] checkStatus error:', err);
+      }
+    } finally {
+      this.statusCheckInFlight = false;
     }
     return { success: false, status: this.currentStatus };
   }
@@ -279,7 +292,7 @@ class WhatsAppService {
       return { success: true, code: mockCode };
     }
 
-    try {
+    const requestCode = async () => {
       const response = await fetch(`${BACKEND_URL}/api/whatsapp/pairing-code`, {
         method: 'POST',
         headers: {
@@ -288,7 +301,17 @@ class WhatsAppService {
         },
         body: JSON.stringify({ phoneNumber })
       });
-      const data = await response.json();
+      return { response, data: await response.json() };
+    };
+
+    try {
+      let { response, data } = await requestCode();
+      const transientError = String(data?.error || '').toLowerCase();
+      if (!response.ok && /connection closed|stream errored|socket closed|pairing request timed out/.test(transientError)) {
+        const newSessionId = resetSessionId();
+        this.socket?.emit('whatsapp:join_session', { sessionId: newSessionId });
+        ({ response, data } = await requestCode());
+      }
       if (data.success && data.code) {
         this.currentPairingCode = data.code;
         this.updateStatus('QR_READY');

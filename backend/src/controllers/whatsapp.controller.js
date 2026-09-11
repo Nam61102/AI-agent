@@ -28,7 +28,21 @@ async function requestPairingCode(req, res) {
       return res.status(400).json({ success: false, status: 'ERROR', error: 'phoneNumber is required' });
     }
     const session = whatsappClient.getSession(sessionId);
-    const result = await session.requestPairingCode(phoneNumber);
+    const requestCode = () => Promise.race([
+      session.requestPairingCode(phoneNumber),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing request timed out. Please wait a moment and request a new code.')), 25000))
+    ]);
+
+    let result;
+    try {
+      result = await requestCode();
+    } catch (firstError) {
+      if (!/connection closed|stream errored|socket closed/i.test(firstError?.message || '')) {
+        throw firstError;
+      }
+      console.warn('[WhatsAppController] Pairing socket closed during startup; retrying once.');
+      result = await requestCode();
+    }
     return res.status(200).json({
       success: true,
       code: result.code,
@@ -54,6 +68,7 @@ async function getStatus(req, res) {
       success: true,
       status: session.status,
       user: session.connectedJid || null,
+      error: session.lastError || null,
       sessionId
     });
   } catch (error) {

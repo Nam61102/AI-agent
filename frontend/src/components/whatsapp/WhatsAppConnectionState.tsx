@@ -53,8 +53,8 @@ export const WhatsAppConnectionState: React.FC<WhatsAppConnectionStateProps> = (
     if (cleanPhone.length === 10) {
       cleanPhone = '91' + cleanPhone;
     }
-    if (!cleanPhone || cleanPhone.length < 10) {
-      setPairingError('Please enter a valid 10-digit mobile number or full number with country code');
+    if (!cleanPhone || cleanPhone.length < 11 || cleanPhone.length > 15) {
+      setPairingError('Enter your WhatsApp number with country code, for example +91 7038128870');
       return;
     }
     setPairingError(null);
