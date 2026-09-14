@@ -19,6 +19,7 @@ export interface WhatsAppServiceListener {
   onRealtimeChats?: (chats: any[]) => void;
   onNewMessage?: (data: { jid: string; message: any }) => void;
   onChatMessages?: (data: { jid: string; messages: any[] }) => void;
+  onNewExtraction?: () => void;
 }
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL as string || 'http://localhost:3000';
@@ -144,6 +145,10 @@ class WhatsAppService {
         if (data) {
           this.listeners.forEach(l => l.onChatMessages?.(data));
         }
+      });
+
+      this.socket.on('whatsapp:new_extraction', () => {
+        this.listeners.forEach(l => l.onNewExtraction?.());
       });
 
     } catch (err) {

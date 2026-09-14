@@ -127,7 +127,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   useEffect(() => {
     fetchAIData();
     const interval = setInterval(fetchAIData, 15000); // Polling every 15s for live actions
-    return () => clearInterval(interval);
+
+    const unsubscribe = whatsappService.subscribe({
+      onNewExtraction: () => {
+        fetchAIData();
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      if (unsubscribe) unsubscribe();
+    };
   }, [isConnected]);
 
   // Fetch live chats

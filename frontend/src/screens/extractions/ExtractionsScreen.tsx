@@ -3,6 +3,7 @@ import { View, StyleSheet, SafeAreaView, StatusBar, TouchableOpacity, ActivityIn
 import { useExtractions } from '../../hooks/useExtractions';
 import { useWhatsApp } from '../../hooks/useWhatsApp';
 import { Extraction, extractionService } from '../../services/extraction.service';
+import { whatsappService } from '../../services/whatsapp.service';
 import { aiService } from '../../services/ai.service';
 import { ExtractionSummary } from '../../components/extractions/ExtractionSummary';
 import { ExtractionFilters } from '../../components/extractions/ExtractionFilters';
@@ -30,6 +31,17 @@ export const ExtractionsScreen: React.FC<ExtractionsScreenProps> = ({
   const [selectedExtraction, setSelectedExtraction] = useState<Extraction | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const { isConnected } = useWhatsApp();
+
+  React.useEffect(() => {
+    const unsubscribe = whatsappService.subscribe({
+      onNewExtraction: () => {
+        refetch();
+      }
+    });
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [refetch]);
 
   const handleAnalyzeChats = async () => {
     setAnalyzing(true);

@@ -5,6 +5,14 @@ const messageService = require('./message.service');
 const supabase = require('../config/supabase');
 
 class MessageProcessorService {
+  constructor() {
+    this.io = null;
+  }
+
+  setSocketIO(io) {
+    this.io = io;
+  }
+
   /**
    * Process a saved message asynchronously
    * @param {Object} message The saved message record from database
@@ -227,6 +235,10 @@ class MessageProcessorService {
           }),
           confidence || 0.95
         ]);
+
+        if (this.io) {
+          this.io.emit('whatsapp:new_extraction', { messageId: message.id, accountJid });
+        }
 
         // Trigger Push Notification for high priority extractions
         if (category === 'needs_action' || subtype === 'urgent' || subtype === 'important_conversation' || subtype === 'meeting') {

@@ -33,6 +33,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 // Attach Socket.IO to WhatsApp client
 whatsappClient.setSocketIO(io);
+messageProcessor.setSocketIO(io);
 
 // Middlewares
 app.use(cors());
