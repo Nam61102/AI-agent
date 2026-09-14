@@ -68,7 +68,6 @@ router.get('/all', async (req, res) => {
         AND TRIM(c.name) != ''
         AND c.name != 'Group'
         AND c.name != 'Unknown'
-        AND c.name !~ '^[0-9+\\s().-]+$'
     `;
     
     if (search) {
@@ -118,7 +117,6 @@ router.get('/top', async (req, res) => {
         AND TRIM(c.name) != ''
         AND c.name != 'Group'
         AND c.name != 'Unknown'
-        AND c.name !~ '^[0-9+\\s().-]+$'
       GROUP BY c.id
       ORDER BY COALESCE(NULLIF(c.relationship_score, 0), LEAST(COUNT(m.id), 100)) DESC,
                message_count DESC

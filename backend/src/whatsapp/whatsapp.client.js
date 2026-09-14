@@ -7,6 +7,7 @@ const QRCode = require('qrcode');
 const auth = require('./whatsapp.auth');
 const events = require('./whatsapp.events');
 const contactService = require('../services/contact.service');
+const relationshipService = require('../services/relationship.service');
 const { getCanonicalJid, formatPhoneNumber, registerLidMapping } = require('./whatsapp.utils');
 
 class WhatsAppSessionInstance {
@@ -202,7 +203,7 @@ class WhatsAppSessionInstance {
         auth: state,
         logger: this.logger,
         printQRInTerminal: false,
-        syncFullHistory: false,
+        syncFullHistory: true,
         generateHighQualityLinkPreview: false,
         markOnlineOnConnect: false,
         connectTimeoutMs: 60000,
@@ -426,6 +427,20 @@ class WhatsAppSessionInstance {
           }
 
           this.emit('whatsapp:realtime_chats', { chats: this.getSortedChats() });
+
+          // Trigger relationship intelligence async pass
+          const uniqueJids = Array.from(new Set((messages || []).map(m => m.key?.remoteJid).filter(j => j && !j.endsWith('@newsletter') && !j.endsWith('@lid'))));
+          if (uniqueJids.length > 0) {
+            setTimeout(async () => {
+              for (const jid of uniqueJids) {
+                try {
+                  await relationshipService.analyzeContact(getCanonicalJid(jid), accountJid);
+                } catch (e) {
+                  console.error(`[Relationship] Failed async score for ${jid}:`, e.message);
+                }
+              }
+            }, 5000); // Give it a short delay to ensure messages are saved to DB
+          }
         });
       });
 

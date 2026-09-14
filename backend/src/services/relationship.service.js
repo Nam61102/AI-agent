@@ -45,7 +45,7 @@ function groupIntoSessions(messages) {
 /**
  * Calculate Math Factors: Responsiveness, Reciprocity, Cadence, Effort Symmetry.
  */
-async function calculateMathFactors(jid, messages) {
+async function calculateMathFactors(jid, messages, accountJid) {
   if (!messages || messages.length === 0) return {};
   
   const sessions = groupIntoSessions(messages);
@@ -113,10 +113,10 @@ async function calculateMathFactors(jid, messages) {
   let cadenceScore = 80;
 
   // Save to DB
-  await saveScore(jid, 'effort_symmetry', effortScore);
-  await saveScore(jid, 'responsiveness', responsivenessScore);
-  await saveScore(jid, 'reciprocity', reciprocityScore);
-  await saveScore(jid, 'cadence', cadenceScore);
+  await saveScore(jid, 'effort_symmetry', effortScore, accountJid);
+  await saveScore(jid, 'responsiveness', responsivenessScore, accountJid);
+  await saveScore(jid, 'reciprocity', reciprocityScore, accountJid);
+  await saveScore(jid, 'cadence', cadenceScore, accountJid);
 
   return { effortScore, responsivenessScore, reciprocityScore, cadenceScore };
 }
@@ -124,7 +124,7 @@ async function calculateMathFactors(jid, messages) {
 /**
  * Calculate AI Factors using Groq.
  */
-async function calculateAIFactors(jid, messages) {
+async function calculateAIFactors(jid, messages, accountJid) {
   if (!messages || messages.length === 0) return {};
   
   // Only send the last 50 messages to save tokens
@@ -168,11 +168,11 @@ Respond ONLY in valid JSON format:
     
     const parsed = JSON.parse(aiResponse);
     
-    if (parsed.engagement_depth !== null) await saveScore(jid, 'engagement_depth', parsed.engagement_depth);
-    if (parsed.sentiment !== null) await saveScore(jid, 'sentiment', parsed.sentiment);
-    if (parsed.follow_through !== null) await saveScore(jid, 'follow_through', parsed.follow_through);
-    if (parsed.empathy !== null) await saveScore(jid, 'empathy', parsed.empathy);
-    if (parsed.conflict_repair !== null) await saveScore(jid, 'conflict_repair', parsed.conflict_repair);
+    if (parsed.engagement_depth !== null) await saveScore(jid, 'engagement_depth', parsed.engagement_depth, accountJid);
+    if (parsed.sentiment !== null) await saveScore(jid, 'sentiment', parsed.sentiment, accountJid);
+    if (parsed.follow_through !== null) await saveScore(jid, 'follow_through', parsed.follow_through, accountJid);
+    if (parsed.empathy !== null) await saveScore(jid, 'empathy', parsed.empathy, accountJid);
+    if (parsed.conflict_repair !== null) await saveScore(jid, 'conflict_repair', parsed.conflict_repair, accountJid);
     
     return parsed;
   } catch (error) {
@@ -181,11 +181,11 @@ Respond ONLY in valid JSON format:
   }
 }
 
-async function saveScore(jid, factor, value) {
+async function saveScore(jid, factor, value, accountJid) {
   if (value === null || value === undefined) return;
   
   // Get contact_id
-  const contactRes = await supabase.query('SELECT id FROM contacts WHERE jid = $1', [jid]);
+  const contactRes = await supabase.query('SELECT id FROM contacts WHERE jid = $1 AND account_jid = $2', [jid, accountJid]);
   if (contactRes.rows.length === 0) return;
   const contactId = contactRes.rows[0].id;
   
@@ -203,13 +203,13 @@ async function saveScore(jid, factor, value) {
 /**
  * Compute the final 0-100 composite score, normalizing for missing factors.
  */
-async function computeCompositeScore(jid) {
+async function computeCompositeScore(jid, accountJid) {
   const result = await supabase.query(`
     SELECT m.factor, m.value 
     FROM contact_metrics m 
     JOIN contacts c ON m.contact_id = c.id 
-    WHERE c.jid = $1
-  `, [jid]);
+    WHERE c.jid = $1 AND c.account_jid = $2
+  `, [jid, accountJid]);
   if (result.rows.length === 0) return 0;
   
   let totalScore = 0;
@@ -233,21 +233,21 @@ async function computeCompositeScore(jid) {
 /**
  * Full Pipeline
  */
-async function analyzeContact(jid) {
+async function analyzeContact(jid, accountJid) {
   // Get last 30 days of messages
   const result = await supabase.query(`
     SELECT * FROM messages 
-    WHERE chat_jid = $1 AND message_type = 'text' 
+    WHERE chat_jid = $1 AND message_type = 'text' AND account_jid = $2
     ORDER BY timestamp ASC
-  `, [jid]);
+  `, [jid, accountJid]);
   
   if (result.rows.length === 0) return;
   
-  await calculateMathFactors(jid, result.rows);
-  await calculateAIFactors(jid, result.rows);
-  const composite = await computeCompositeScore(jid);
+  await calculateMathFactors(jid, result.rows, accountJid);
+  await calculateAIFactors(jid, result.rows, accountJid);
+  const composite = await computeCompositeScore(jid, accountJid);
   
-  await supabase.query('UPDATE contacts SET relationship_score = $1 WHERE jid = $2', [composite, jid]);
+  await supabase.query('UPDATE contacts SET relationship_score = $1 WHERE jid = $2 AND account_jid = $3', [composite, jid, accountJid]);
   
   console.log(`[Relationship] Computed score ${composite} for ${jid}`);
   return composite;
