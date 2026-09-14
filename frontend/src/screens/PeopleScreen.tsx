@@ -122,8 +122,8 @@ export const PeopleScreen: React.FC<PeopleScreenProps> = ({
     
     // Sort by relationship_score descending
     return [...result].sort((a: any, b: any) => {
-      const scoreA = a.relationship_score || 0;
-      const scoreB = b.relationship_score || 0;
+      const scoreA = Number(a.relationship_score) || 0;
+      const scoreB = Number(b.relationship_score) || 0;
       return scoreB - scoreA;
     });
   }, [contacts, searchQuery]);
@@ -134,17 +134,8 @@ export const PeopleScreen: React.FC<PeopleScreenProps> = ({
 
     // Fetch Relationship score breakdown
     contactService.getRelationshipData(contact.jid).then(data => {
-      if (data && data.success && data.factors && Object.keys(data.factors).length > 0) {
+      if (data && data.success) {
         setRelationshipData(data);
-      } else {
-        // Trigger live relationship analysis if no existing metrics found
-        contactService.analyzeRelationship(contact.jid).then(analyzeRes => {
-          if (analyzeRes.success) {
-            contactService.getRelationshipData(contact.jid).then(newData => {
-              if (newData && newData.success) setRelationshipData(newData);
-            });
-          }
-        }).catch(err => console.error('Failed to trigger relationship analysis', err));
       }
     }).catch(e => console.error('Failed to load relationship data', e));
 

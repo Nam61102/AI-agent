@@ -84,7 +84,7 @@ router.get('/all', async (req, res) => {
     
     const formatted = (rows || []).map(c => ({
       ...c,
-      relationship_score: c.relationship_score > 0 ? c.relationship_score : parseInt(c.calculated_score || 0)
+      relationship_score: Number(c.relationship_score) > 0 ? Number(c.relationship_score) : parseInt(c.calculated_score || 0)
     }));
     
     res.json({ success: true, data: formatted });
@@ -127,7 +127,7 @@ router.get('/top', async (req, res) => {
     
     const formatted = (rows || []).map(c => ({
       ...c,
-      relationship_score: c.relationship_score > 0 ? c.relationship_score : parseInt(c.calculated_score || 0)
+      relationship_score: Number(c.relationship_score) > 0 ? Number(c.relationship_score) : parseInt(c.calculated_score || 0)
     }));
     
     res.json({ success: true, data: formatted });
