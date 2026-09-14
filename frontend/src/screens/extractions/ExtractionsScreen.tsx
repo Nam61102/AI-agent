@@ -33,12 +33,25 @@ export const ExtractionsScreen: React.FC<ExtractionsScreenProps> = ({
   const { isConnected } = useWhatsApp();
 
   React.useEffect(() => {
+    let analyzingTimeout: NodeJS.Timeout;
+
     const unsubscribe = whatsappService.subscribe({
+      onNewMessage: (data) => {
+        if (data?.message?.key?.fromMe === false) {
+          setAnalyzing(true);
+          clearTimeout(analyzingTimeout);
+          analyzingTimeout = setTimeout(() => {
+            setAnalyzing(false);
+          }, 6000);
+        }
+      },
       onNewExtraction: () => {
+        setAnalyzing(false);
         refetch();
       }
     });
     return () => {
+      clearTimeout(analyzingTimeout);
       if (unsubscribe) unsubscribe();
     };
   }, [refetch]);

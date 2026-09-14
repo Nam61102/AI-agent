@@ -127,15 +127,31 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   useEffect(() => {
     fetchAIData();
     const interval = setInterval(fetchAIData, 15000); // Polling every 15s for live actions
+    
+    let analyzingTimeout: NodeJS.Timeout;
 
     const unsubscribe = whatsappService.subscribe({
+      onNewMessage: (data) => {
+        // When a new message comes in, optimistically show AI is analyzing
+        if (data?.message?.key?.fromMe === false) {
+          setAnalyzing(true);
+          clearTimeout(analyzingTimeout);
+          // Auto-clear after 6 seconds in case it was a casual message that got discarded
+          analyzingTimeout = setTimeout(() => {
+            setAnalyzing(false);
+          }, 6000);
+        }
+      },
       onNewExtraction: () => {
+        setAnalyzing(false);
         fetchAIData();
+        refetch(); // from useExtractions if used here, else just fetchAIData
       }
     });
 
     return () => {
       clearInterval(interval);
+      clearTimeout(analyzingTimeout);
       if (unsubscribe) unsubscribe();
     };
   }, [isConnected]);
