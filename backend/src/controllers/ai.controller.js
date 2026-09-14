@@ -72,6 +72,7 @@ async function getActions(req, res) {
       LEFT JOIN messages m ON a.source_message_id = m.id
       LEFT JOIN suggested_replies sr ON a.suggested_reply_id = sr.id
       WHERE a.status = $1 AND a.account_jid = $2
+        AND a.category != 'ai_auto_reply'
         AND a.chat_jid NOT LIKE '%@newsletter'
         AND a.chat_jid NOT LIKE '%@lid'
       ORDER BY a.created_at DESC
@@ -177,9 +178,11 @@ async function getIntelligence(req, res) {
       LEFT JOIN messages m ON a.source_message_id = m.id
       LEFT JOIN suggested_replies sr ON a.suggested_reply_id = sr.id
       WHERE a.status = $1 AND a.account_jid = $2
+        AND a.category != 'ai_auto_reply'
         AND a.chat_jid NOT LIKE '%@newsletter'
         AND a.chat_jid NOT LIKE '%@lid'
-      ORDER BY a.created_at DESC;
+      ORDER BY a.priority DESC, a.created_at DESC
+      LIMIT 50;
     `;
 
     const result = await supabase.query(query, [status, accountJid]);
@@ -366,7 +369,7 @@ async function getDashboardSummary(req, res) {
       supabase.query(`SELECT COUNT(*) FROM messages WHERE account_jid = $1 AND timestamp >= NOW() - INTERVAL '24 hours'`, [accountJid]),
       supabase.query(`SELECT COUNT(*) FROM suggested_replies WHERE account_jid = $1 AND created_at >= NOW() - INTERVAL '24 hours'`, [accountJid]),
       supabase.query(`SELECT COUNT(DISTINCT chat_jid) FROM messages WHERE account_jid = $1 AND timestamp >= NOW() - INTERVAL '24 hours'`, [accountJid]),
-      supabase.query(`SELECT COUNT(DISTINCT COALESCE(payload->>'what_matters', payload->>'description', payload->>'title', type)) FROM extractions WHERE account_jid = $1 AND status = 'active' AND type NOT IN ('none', 'ai_auto_reply') AND confidence >= 0.90`, [accountJid])
+      supabase.query(`SELECT COUNT(DISTINCT COALESCE(payload->>'whatMatters', payload->>'what_matters', payload->>'description', payload->>'title', type)) FROM extractions WHERE account_jid = $1 AND status = 'active' AND type NOT IN ('none', 'ai_auto_reply') AND confidence >= 0.90`, [accountJid])
     ]);
 
     return res.status(200).json({

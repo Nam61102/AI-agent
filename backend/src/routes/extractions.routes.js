@@ -54,10 +54,12 @@ router.get('/', async (req, res) => {
     
     for (const row of result.rows) {
       let meaningStr = '';
-      if (row.payload && row.payload.what_matters) {
-        meaningStr = row.payload.what_matters.toLowerCase().trim();
+      if (row.payload && (row.payload.whatMatters || row.payload.what_matters)) {
+        meaningStr = (row.payload.whatMatters || row.payload.what_matters).toLowerCase().trim();
       } else if (row.title) {
         meaningStr = row.title.toLowerCase().trim();
+      } else if (row.payload && row.payload.title) {
+        meaningStr = row.payload.title.toLowerCase().trim();
       } else {
         meaningStr = row.id.toString();
       }
