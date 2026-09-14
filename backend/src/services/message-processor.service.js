@@ -153,7 +153,7 @@ class MessageProcessorService {
                 subtype: actType,
                 confidence: 0.92,
                 status: 'active',
-                whatMatters: rData.event_details?.title || (category === 'needs_action' ? 'Action Required' : 'Message Received'),
+                whatMatters: rData.summary_title || rData.event_details?.title || (category === 'needs_action' ? 'Action Required' : 'Message Received'),
                 whyItMatters: rData.reason || 'AI detected a response is expected.',
                 recommendedAction: suggestedReply ? 'Send suggested reply' : 'Review message context',
                 suggestedReply: rData.suggested_reply

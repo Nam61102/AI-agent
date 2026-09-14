@@ -140,6 +140,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           analyzingTimeout = setTimeout(() => {
             setAnalyzing(false);
           }, 6000);
+          
+          // Re-fetch chats immediately to ensure new contacts appear in the Active Chats list
+          whatsappService.fetchChats(12).then(fetchedChats => {
+            if (fetchedChats) setChats(fetchedChats);
+          }).catch(() => {});
         }
       },
       onNewExtraction: () => {
