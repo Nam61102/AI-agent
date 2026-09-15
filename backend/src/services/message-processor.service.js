@@ -36,16 +36,19 @@ class MessageProcessorService {
     }
 
     const query = `
-      SELECT m.*
-      FROM messages m
-      WHERE m.message_type = 'text'
-        AND m.from_me = false
-        AND NULLIF(TRIM(m.text), '') IS NOT NULL
-        ${accountFilter}
-        AND NOT EXISTS (
-          SELECT 1 FROM ai_actions a WHERE a.source_message_id = m.id
-        )
-      ORDER BY m.timestamp DESC
+        SELECT m.*
+        FROM messages m
+        WHERE m.message_type = 'text'
+          AND m.from_me = false
+          AND m.chat_jid NOT LIKE '%@newsletter'
+          AND m.chat_jid NOT LIKE '%@g.us'
+          AND m.chat_jid NOT LIKE '%@lid'
+          AND NULLIF(TRIM(m.text), '') IS NOT NULL
+          ${accountFilter}
+          AND NOT EXISTS (
+            SELECT 1 FROM ai_actions a WHERE a.source_message_id = m.id
+          )
+        ORDER BY m.timestamp DESC
       LIMIT $${params.length};
     `;
 

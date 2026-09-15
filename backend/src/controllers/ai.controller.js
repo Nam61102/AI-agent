@@ -391,26 +391,9 @@ async function analyzeActiveChats(req, res) {
   try {
     const accountJid = req.accountJid;
     const messageProcessor = require('../services/message-processor.service');
-    const query = `
-      SELECT DISTINCT ON (chat_jid)
-        m.*
-      FROM messages m
-      WHERE m.account_jid = $1
-        AND m.from_me = false
-        AND m.message_type = 'text'
-        AND m.text IS NOT NULL
-        AND TRIM(m.text) != ''
-        AND m.chat_jid NOT LIKE '%@newsletter'
-        AND m.chat_jid NOT LIKE '%@g.us'
-        AND m.chat_jid NOT LIKE '%@lid'
-      ORDER BY m.chat_jid, m.timestamp DESC
-      LIMIT 10;
-    `;
-
-    const result = await supabase.query(query, [accountJid]);
-    for (const msg of result.rows) {
-      await messageProcessor._processAsync(msg);
-    }
+    
+    // Process up to 30 pending messages across all contacts to find buried tasks
+    await messageProcessor.processPendingMessages(30, accountJid);
 
     return getActions(req, res);
   } catch (error) {
